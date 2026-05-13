@@ -5,7 +5,7 @@ Roles: admin (boss) > super_admin > intern
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
@@ -14,7 +14,7 @@ from pathlib import Path
 import csv, json, re, os, smtplib, urllib.parse, urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
+from fastapi.staticfiles import StaticFiles
 from database import SessionLocal, engine
 import models, schemas
 
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent), name="static")
+app.mount("/static", StaticFiles(directory="."), name="static")
 
 SECRET_KEY    = "JOBJOCKEY_SECRET_2025"
 ALGORITHM     = "HS256"
@@ -154,7 +154,8 @@ def fetch_google_form_responses(sheet_id: str, sheet_name: Optional[str] = None)
 
 
 @app.get("/")
-def root(): return {"status": "Job Jockey API running ✅", "version": "3.1"}
+def root():
+    return FileResponse("index.html")
 
 # ════════════════════════════════════════════════
 # AUTH
