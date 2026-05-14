@@ -656,6 +656,7 @@ async function doLogin(){
     localStorage.setItem("jj_user", currentUser);
     localStorage.setItem("jj_uid", currentUserId);
     localStorage.setItem("jj_email", email);
+    localStorage.setItem("jj_login_time", new Date().toISOString());
     document.getElementById("loginPage").classList.add("hidden");
     document.getElementById("appLayout").classList.remove("hidden");
     await loadAllUsers();
@@ -686,20 +687,77 @@ function goAssignTask(email, name){
 }
 
 function doLogout(){
+  clearTimeout(_inactivityTimer);
   token=""; currentRole=""; currentUser=""; currentUserId=null;
   localStorage.removeItem("jj_token");
   localStorage.removeItem("jj_role");
   localStorage.removeItem("jj_user");
   localStorage.removeItem("jj_uid");
   localStorage.removeItem("jj_email");
+  localStorage.removeItem("jj_login_time");
+  localStorage.removeItem("jj_permissions");
   if(ws){try{ws.close();}catch(e){}ws=null;}
   Object.values(chatCharts).forEach(c=>c&&c.destroy&&c.destroy()); chatCharts={};
   document.getElementById("appLayout").classList.add("hidden");
   document.getElementById("loginPage").classList.remove("hidden");
-  document.getElementById("loginName").value="";
   document.getElementById("loginEmail").value="";
   document.getElementById("loginPassword").value="";
   showToast("Signed out","info");
+}
+
+function showWorkLogPopup(){
+  const loginTime=localStorage.getItem("jj_login_time");
+  const loginStr=loginTime?new Date(loginTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"";
+  const nowStr=new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
+  const existing=document.getElementById("workLogPopup");
+  if(existing) existing.remove();
+  const popup=document.createElement("div");
+  popup.id="workLogPopup";
+  popup.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px";
+  popup.innerHTML=`
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:500px;box-shadow:0 24px 64px rgba(0,0,0,0.5);max-height:90vh;overflow-y:auto" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700">📋 Work Log — End of Day</div>
+      <button onclick="document.getElementById('workLogPopup').remove()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field" style="margin:0"><label>Work Assigned</label><textarea id="wl_assigned" rows="2" placeholder="What work was assigned to you today?" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box"></textarea></div>
+      <div class="field" style="margin:0"><label>Work Did</label><textarea id="wl_did" rows="2" placeholder="What did you actually complete?" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box"></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="field" style="margin:0"><label>Work Started At</label><input id="wl_started" type="time" value="${loginStr}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;box-sizing:border-box"></div>
+        <div class="field" style="margin:0"><label>Completed At</label><input id="wl_completed" type="time" value="${nowStr}" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;box-sizing:border-box"></div>
+      </div>
+      <div class="field" style="margin:0"><label>No. of Hours Worked</label><input id="wl_hours" type="number" min="0" max="24" step="0.5" placeholder="e.g. 8" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;box-sizing:border-box"></div>
+      <div class="field" style="margin:0"><label>Issues Faced</label><textarea id="wl_issues" rows="2" placeholder="Any blockers or problems?" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box"></textarea></div>
+      <div class="field" style="margin:0"><label>Resolved Issues</label><textarea id="wl_resolved" rows="2" placeholder="Issues you managed to resolve?" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box"></textarea></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button onclick="submitWorkLogAndLogout()" style="flex:1;background:#ef4444;color:#fff;border:none;border-radius:10px;padding:11px;font-weight:700;font-size:14px;cursor:pointer">Submit &amp; Logout</button>
+      <button onclick="doLogout();document.getElementById('workLogPopup')?.remove()" style="background:var(--surface2);color:var(--text-muted);border:1px solid var(--border);border-radius:10px;padding:11px 18px;font-size:13px;cursor:pointer">Skip &amp; Logout</button>
+    </div>
+  </div>`;
+  document.body.appendChild(popup);
+}
+
+async function submitWorkLogAndLogout(){
+  const email=localStorage.getItem("jj_email")||"";
+  const loginTime=localStorage.getItem("jj_login_time")||"";
+  const logoutTime=new Date().toISOString();
+  const payload={
+    email, name:currentUser,
+    login_time: loginTime,
+    logout_time: logoutTime,
+    work_assigned: document.getElementById("wl_assigned")?.value||"",
+    work_did:      document.getElementById("wl_did")?.value||"",
+    hours_worked:  document.getElementById("wl_hours")?.value||"",
+    issues:        document.getElementById("wl_issues")?.value||"",
+    resolved:      document.getElementById("wl_resolved")?.value||"",
+    started_at:    document.getElementById("wl_started")?.value||"",
+    completed_at:  document.getElementById("wl_completed")?.value||""
+  };
+  try{ await api("/worklog","POST",payload); }catch(e){}
+  document.getElementById("workLogPopup")?.remove();
+  doLogout();
 }
 
 // ─── INIT ────────────────────────────────────
@@ -837,6 +895,7 @@ async function renderInternDashboard(){
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Today</div>
       </div>
       ${todayStatus==="Not Marked"?`<button class="btn-sm btn-accent" onclick="markMyAttendance()">✓ Mark Present</button>`:""}
+      <button onclick="showWorkLogPopup()" style="background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.35);border-radius:9px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">🚪 Logout</button>
     </div>
   </div>
 

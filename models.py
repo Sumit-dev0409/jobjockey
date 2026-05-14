@@ -116,6 +116,24 @@ class Notification(Base):
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class WorkLog(Base):
+    __tablename__ = "work_logs"
+    id           = Column(Integer, primary_key=True, index=True)
+    email        = Column(String, index=True)
+    name         = Column(String, default="")
+    login_time   = Column(String, default="")
+    logout_time  = Column(String, default="")
+    work_assigned= Column(Text, default="")
+    work_did     = Column(Text, default="")
+    hours_worked = Column(String, default="")
+    issues       = Column(Text, default="")
+    resolved     = Column(Text, default="")
+    started_at   = Column(String, default="")
+    completed_at = Column(String, default="")
+    date         = Column(String, default="")   # YYYY-MM-DD
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class GroupMessage(Base):
     __tablename__ = "group_messages"
     id         = Column(Integer, primary_key=True, index=True)

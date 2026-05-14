@@ -183,6 +183,8 @@ def register_intern(data: schemas.RegisterUser, db: Session = Depends(get_db)):
     if db.query(models.User).filter(models.User.email == data.email).first(): raise HTTPException(400, "Email already registered")
     user = models.User(name=data.name or data.email.split("@")[0], email=data.email, password=data.password, role="intern", permissions="")
     db.add(user); db.commit(); db.refresh(user)
+    from datetime import date as _date
+    send_to_sheet({"type":"new_user","date":str(_date.today()),"name":user.name,"email":user.email,"role":user.role})
     return {"msg": "Intern created", "id": user.id}
 
 @app.post("/login", response_model=schemas.LoginOut)
@@ -470,6 +472,44 @@ def get_attendance(date: Optional[str] = None, db: Session = Depends(get_db), us
     if user.role == "intern": q = q.filter(models.Attendance.email == user.email)
     if date: q = q.filter(models.Attendance.date == date)
     return q.all()
+
+# ════════════════════════════════════════════════
+# WORK LOG
+# ════════════════════════════════════════════════
+def send_to_sheet(payload: dict):
+    webhook = os.getenv("GSHEET_WEBHOOK_URL", "")
+    if not webhook: return
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req  = urllib.request.Request(webhook, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"Sheet webhook failed: {e}")
+
+@app.post("/worklog")
+def submit_worklog(data: schemas.WorkLogCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    from datetime import date as _date
+    log = models.WorkLog(
+        email=user.email, name=user.name,
+        login_time=data.login_time, logout_time=data.logout_time,
+        work_assigned=data.work_assigned, work_did=data.work_did,
+        hours_worked=data.hours_worked, issues=data.issues,
+        resolved=data.resolved, started_at=data.started_at,
+        completed_at=data.completed_at, date=str(_date.today())
+    )
+    db.add(log); db.commit()
+    send_to_sheet({"type":"worklog","date":str(_date.today()),"name":user.name,"email":user.email,
+        "work_assigned":data.work_assigned,"work_did":data.work_did,
+        "hours_worked":data.hours_worked,"issues":data.issues,"resolved":data.resolved,
+        "started_at":data.started_at,"completed_at":data.completed_at,
+        "login_time":data.login_time,"logout_time":data.logout_time})
+    return {"msg": "Work log saved"}
+
+@app.get("/worklog")
+def get_worklogs(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    q = db.query(models.WorkLog)
+    if user.role not in ("admin","super_admin"): q = q.filter(models.WorkLog.email == user.email)
+    return q.order_by(models.WorkLog.created_at.desc()).all()
 
 # ════════════════════════════════════════════════
 # REPORTS

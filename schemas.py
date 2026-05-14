@@ -151,6 +151,21 @@ class GoogleFormImportRequest(BaseModel):
     skip_existing: Optional[bool] = True
 
 
+# ─── WORK LOG ────────────────────────────────────
+class WorkLogCreate(BaseModel):
+    email: Optional[str] = ""
+    name: Optional[str] = ""
+    login_time: Optional[str] = ""
+    logout_time: Optional[str] = ""
+    work_assigned: Optional[str] = ""
+    work_did: Optional[str] = ""
+    hours_worked: Optional[str] = ""
+    issues: Optional[str] = ""
+    resolved: Optional[str] = ""
+    started_at: Optional[str] = ""
+    completed_at: Optional[str] = ""
+
+
 # ─── ATTENDANCE ──────────────────────────────────
 class AttendanceMark(BaseModel):
     date: str                       # YYYY-MM-DD
