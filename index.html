@@ -771,7 +771,6 @@ async function submitWorkLogAndLogout(){
     completed_at:  document.getElementById("wl_completed")?.value||""
   };
   try{ await api("/worklog","POST",payload); }catch(e){}
-  localStorage.setItem("jj_worklog_done","1");
   document.getElementById("workLogPopup")?.remove();
   doLogout();
 }
@@ -801,7 +800,7 @@ function initApp(){
   const nav=isAdmin()?ADMIN_NAV:(isSuperAdmin()?getSuperAdminNav():INTERN_NAV);
   const initials=currentUser.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
   document.getElementById("sidebarAvatar").textContent=initials;
-  document.getElementById("sidebarName").textContent=isAdmin()?"God":currentUser;
+  document.getElementById("sidebarName").textContent=isAdmin()?"GOD":currentUser;
   document.getElementById("sidebarRole").textContent=roleLabel(currentRole);
   const sidebarNav=document.getElementById("sidebarNav"); sidebarNav.innerHTML="";
   nav.forEach(sec=>{
@@ -902,7 +901,7 @@ async function renderInternDashboard(){
   <!-- Welcome strip -->
   <div style="background:linear-gradient(135deg,rgba(245,158,11,0.12),rgba(59,130,246,0.08));border:1px solid rgba(245,158,11,0.2);border-radius:14px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
-      <div style="font-size:20px;font-weight:700;font-family:'Syne',sans-serif">Welcome back, ${isAdmin()?"God":currentUser} 👋</div>
+      <div style="font-size:20px;font-weight:700;font-family:'Syne',sans-serif">Welcome back, ${isAdmin()?"GOD":currentUser} 👋</div>
       <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Today is ${new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
     </div>
     <div style="display:flex;align-items:center;gap:10px">
