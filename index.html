@@ -500,19 +500,16 @@ function canManage(){
   return isAdmin() || hasPermission("create_task") || hasPermission("manage_projects") || hasPermission("manage_groups") || hasPermission("manage_meetings") || hasPermission("send_notifications") || hasPermission("view_productivity") || hasPermission("view_reports") || hasPermission("manage_attendance");
 }
 function getSuperAdminNav(){
+  // intern pages are always available to super_admin regardless of permissions
+  const internIds=new Set(INTERN_NAV.flatMap(s=>s.items.map(i=>i.id)));
   return SUPERADMIN_NAV.map(section=>({
     ...section,
     items: section.items.filter(item=>{
       if(item.id===undefined) return false;
-      if(item.id==="dashboard"||item.id==="settings"||item.id==="chat") return true;
+      if(internIds.has(item.id)) return true; // always show all intern pages
       if(item.id==="candidates") return hasPermission("manage_candidates");
       if(item.id==="tasks") return hasPermission("create_task") || hasPermission("delete_task") || hasPermission("view_reports");
       if(item.id==="projects") return hasPermission("manage_projects");
-      if(item.id==="attendance") return hasPermission("manage_attendance");
-      if(item.id==="reports") return hasPermission("view_reports");
-      if(item.id==="groups") return hasPermission("manage_groups");
-      if(item.id==="meetings"||item.id==="calendar") return hasPermission("manage_meetings");
-      if(item.id==="notifications") return true; // notifications are viewable even if sending is restricted
       return false;
     })
   })).filter(section=>section.items.length);
@@ -609,7 +606,7 @@ const ADMIN_NAV=[
   ]},
 ];
 const SUPERADMIN_NAV=[
-  {section:"Main",items:[{id:"dashboard",label:"Dashboard",icon:svgDash}]},
+  {section:"Main",items:[{id:"dashboard",label:"Dashboard",icon:svgDash},{id:"mytasks",label:"My Tasks",icon:svgTask}]},
   {section:"System",items:[{id:"settings",label:"Settings",icon:`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`}]},
   {section:"Manage",items:[
     {id:"tasks",label:"Tasks",icon:svgTask},
@@ -746,7 +743,7 @@ function initApp(){
 
 function navTo(id){
   if(isSuperAdmin()){
-    const allowedPages=hasSuperAdminAccess()?getSuperAdminNav().flatMap(sec=>sec.items.map(item=>item.id)):["dashboard","mytasks","attendance","reports","chat","groups","meetings","calendar","notifications","settings"];
+    const allowedPages=getSuperAdminNav().flatMap(sec=>sec.items.map(item=>item.id));
     if(!allowedPages.includes(id)) id="dashboard";
   }
   currentSection=id;
