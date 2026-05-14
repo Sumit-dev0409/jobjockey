@@ -480,17 +480,43 @@
 <script>
 const API_URL = "http://127.0.0.1:8000";
 let token="", currentRole="", currentUser="", currentSection="";
-let currentUserId=null, selectedReceiverId=null, ws=null;
+let currentPermissions="", currentUserId=null, selectedReceiverId=null, ws=null;
 let allUsers=[], chatCharts={}, calDate=new Date();
 let currentSheetId="";
 
 const COLORS=["#f59e0b","#3b82f6","#10b981","#8b5cf6","#ef4444","#06b6d4"];
 
-// ─── ROLE CHECKS ─────────────────────────────
+// ─── ROLE / PERMISSION CHECKS ─────────────────
 function isAdmin(){ return currentRole==="admin"; }
 function isSuperAdmin(){ return currentRole==="super_admin"; }
 function isIntern(){ return currentRole==="intern"; }
-function canManage(){ return isAdmin()||isSuperAdmin(); }
+function hasPermission(key){
+  return isAdmin() || (currentPermissions||"").split(",").map(p=>p.trim()).includes(key);
+}
+function hasSuperAdminAccess(){
+  return isSuperAdmin() && (currentPermissions||"").trim() !== "";
+}
+function canManage(){
+  return isAdmin() || hasPermission("create_task") || hasPermission("manage_projects") || hasPermission("manage_groups") || hasPermission("manage_meetings") || hasPermission("send_notifications") || hasPermission("view_productivity") || hasPermission("view_reports") || hasPermission("manage_attendance");
+}
+function getSuperAdminNav(){
+  return SUPERADMIN_NAV.map(section=>({
+    ...section,
+    items: section.items.filter(item=>{
+      if(item.id===undefined) return false;
+      if(item.id==="dashboard"||item.id==="settings"||item.id==="chat") return true;
+      if(item.id==="candidates") return hasPermission("manage_candidates");
+      if(item.id==="tasks") return hasPermission("create_task") || hasPermission("delete_task") || hasPermission("view_reports");
+      if(item.id==="projects") return hasPermission("manage_projects");
+      if(item.id==="attendance") return hasPermission("manage_attendance");
+      if(item.id==="reports") return hasPermission("view_reports");
+      if(item.id==="groups") return hasPermission("manage_groups");
+      if(item.id==="meetings"||item.id==="calendar") return hasPermission("manage_meetings");
+      if(item.id==="notifications") return true; // notifications are viewable even if sending is restricted
+      return false;
+    })
+  })).filter(section=>section.items.length);
+}
 
 // ─── API HELPER ──────────────────────────────
 async function api(path, method="GET", body=null){
@@ -507,6 +533,21 @@ function showToast(msg,type=""){
   const t=document.createElement("div");t.className="toast "+type;t.textContent=msg;
   area.appendChild(t);
   setTimeout(()=>{t.style.animation="fadeOut .3s ease forwards";setTimeout(()=>t.remove(),300)},3500);
+}
+function showChatNotification(sender,message){
+  const text = message?message.toString().trim():"New message";
+  const preview = text.length>80?text.slice(0,80)+"...":text;
+  playNotifSound();
+  showToast(`💬 ${sender}: ${preview}`,"info");
+  if(_notifPopupOpen){
+    const list=document.getElementById("notifPopupList");
+    if(list){
+      const item=document.createElement("div");
+      item.className="notif-popup-item unread";
+      item.innerHTML=`<div class="notif-popup-title">💬 New message from ${sender}</div><div class="notif-popup-body">${preview}</div>`;
+      list.prepend(item);
+    }
+  }
 }
 function openModal(id){document.getElementById(id).classList.remove("hidden");}
 function closeModal(id){document.getElementById(id).classList.add("hidden");}
@@ -528,7 +569,7 @@ function initChart(id,type,labels,datasets,options={}){
   return new Chart(ctx,{type,data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:"#94a3b8",font:{family:"DM Sans",size:12}}}},scales:type!=="doughnut"&&type!=="pie"?{x:{ticks:{color:"#64748b"},grid:{color:"rgba(255,255,255,0.04)"}},y:{ticks:{color:"#64748b"},grid:{color:"rgba(255,255,255,0.04)"}}}:{},...options}});
 }
 function filterTable(tbId,q){document.querySelectorAll("#"+tbId+" tr").forEach(r=>r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?"":"none");}
-function filterCol(tbId,col,val){document.querySelectorAll("#"+tbId+" tr").forEach(r=>{if(!val){r.style.display="";return;}const c=r.querySelectorAll("td");r.style.display=(c[col]&&c[col].textContent.includes(val))?"":"none";});}
+function filterCol(tbId,col,val){document.querySelectorAll("#"+tbId+" tr").forEach(r=>{if(!val){r.style.display="";return;}const c=r.querySelectorAll("td");let cellText="";if(c[col]){const sel=c[col].querySelector("select");if(sel){cellText=(sel.value||sel.options[sel.selectedIndex]?.textContent||"").trim();}else{cellText=c[col].textContent.trim();}}const query=val.toString().trim().toLowerCase();r.style.display=(cellText.toLowerCase().includes(query))?"":"none";});}
 
 // ─── NAV CONFIG ──────────────────────────────
 const svgDash=`<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`;
@@ -613,10 +654,11 @@ async function doLogin(){
   if(!password){showToast("Please enter your password","error");return;}
   try{
     const data=await api("/login","POST",{email,password});
-    token=data.access_token; currentRole=data.role; currentUser=data.name; currentUserId=data.user_id;
+    token=data.access_token; currentRole=data.role; currentPermissions=data.permissions||""; currentUser=data.name; currentUserId=data.user_id;
     // Save session to localStorage so refresh doesn't log out
     localStorage.setItem("jj_token", token);
     localStorage.setItem("jj_role", currentRole);
+    localStorage.setItem("jj_permissions", currentPermissions);
     localStorage.setItem("jj_user", currentUser);
     localStorage.setItem("jj_uid", currentUserId);
     localStorage.setItem("jj_email", email);
@@ -673,7 +715,7 @@ async function populateAssignDropdown(){
   // Always fetch fresh users so newly approved candidates appear
   try{ allUsers = await api("/users"); }catch(e){}
   const sel=document.getElementById("tAssign"); if(!sel)return;
-  const assignable=isAdmin()?allUsers.filter(u=>u.role!=="admin"):allUsers.filter(u=>u.role==="intern");
+  const assignable=canManage()?allUsers.filter(u=>u.role!=="admin"):[];
   sel.innerHTML=assignable.map(u=>`<option value="${u.email}">${u.name} (${u.role})</option>`).join("");
 }
 
@@ -687,7 +729,7 @@ async function populateProjectDropdown(){
 }
 
 function initApp(){
-  const nav=isAdmin()?ADMIN_NAV:isSuperAdmin()?SUPERADMIN_NAV:INTERN_NAV;
+  const nav=isAdmin()?ADMIN_NAV:(isSuperAdmin()?getSuperAdminNav():INTERN_NAV);
   const initials=currentUser.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
   document.getElementById("sidebarAvatar").textContent=initials;
   document.getElementById("sidebarName").textContent=currentUser;
@@ -703,6 +745,10 @@ function initApp(){
 }
 
 function navTo(id){
+  if(isSuperAdmin()){
+    const allowedPages=hasSuperAdminAccess()?getSuperAdminNav().flatMap(sec=>sec.items.map(item=>item.id)):["dashboard","mytasks","attendance","reports","chat","groups","meetings","calendar","notifications","settings"];
+    if(!allowedPages.includes(id)) id="dashboard";
+  }
   currentSection=id;
   document.querySelectorAll(".nav-item").forEach(el=>el.classList.toggle("active",el.id==="nav_"+id));
   const titles={dashboard:"Dashboard",users:"Users & Roles",candidates:"Candidates",tasks:"Tasks",projects:"Projects",attendance:"Attendance",reports:"Reports",productivity:"Productivity",chat:"Chat",groups:"Groups",meetings:"Meetings",calendar:"Calendar",notifications:"Notifications",mytasks:"My Tasks",settings:"Settings"};
@@ -722,7 +768,7 @@ function navTo(id){
 // DASHBOARD
 // ════════════════════════════════════════════
 async function renderDashboard(){
-  if(isIntern()){ await renderInternDashboard(); return; }
+  if(isIntern() || (isSuperAdmin() && !hasSuperAdminAccess())){ await renderInternDashboard(); return; }
   let stats={total_interns:0,tasks_completed:0,total_projects:0,present_today:0,tasks_pending:0,tasks_in_progress:0};
   let recentTasks=[];
   try{stats=await api("/stats");}catch(e){}
@@ -937,7 +983,7 @@ const ALL_PERMISSIONS = [
   { key:"manage_projects",    label:"Manage Projects",        desc:"Can create and update projects",           icon:"🚀" },
 ];
 
-function openPermissionsModal(uid, name, currentPerms){
+function openPermissionsModal(uid, name, currentPerms, mode="default"){
   const ex=document.getElementById("permModal");if(ex)ex.remove();
   const current=currentPerms.split(",").map(p=>p.trim()).filter(Boolean);
 
@@ -950,7 +996,7 @@ function openPermissionsModal(uid, name, currentPerms){
     <!-- Header -->
     <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div>
-        <h3 style="margin:0;font-size:16px;font-weight:700">🔧 Set Permissions</h3>
+        <h3 style="margin:0;font-size:16px;font-weight:700">${mode === "promote" ? "🔧 Promote to Super Admin & Set Permissions" : "🔧 Set Permissions"}</h3>
         <p style="margin:4px 0 0;font-size:12.5px;color:var(--text-muted)">⭐ ${name} — Super Admin</p>
       </div>
       <button onclick="document.getElementById('permModal').remove()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer">✕</button>
@@ -981,7 +1027,7 @@ function openPermissionsModal(uid, name, currentPerms){
     <!-- Footer -->
     <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0">
       <button class="btn-sm btn-outline" onclick="document.getElementById('permModal').remove()">Cancel</button>
-      <button class="btn-sm btn-accent" onclick="savePermissions(${uid},'${name}')">✓ Save Permissions</button>
+      <button class="btn-sm btn-accent" onclick="savePermissions(${uid},'${name}','${mode}')">✓ Save Permissions</button>
     </div>
   </div>`;
   document.body.appendChild(modal);
@@ -1005,37 +1051,55 @@ function permSelectAll(checked){
   updatePermCount();
 }
 
-async function savePermissions(uid, name){
+async function savePermissions(uid, name, mode="default"){
   const checked=Array.from(document.querySelectorAll("#permModal input[type=checkbox]:checked")).map(cb=>cb.value);
   const perms=checked.join(",");
+  if(mode === "promote" && !perms){
+    showToast("Select at least one permission before promoting to Super Admin","error");
+    return;
+  }
   try{
     await api("/users/"+uid+"/permissions","PATCH",{permissions:perms});
-    showToast("Permissions saved for "+name+"!","success");
+    if(mode === "promote"){
+      await api("/users/"+uid+"/promote","PATCH");
+      showToast(name+" is now Super Admin ⭐","success");
+      if(uid === currentUserId){
+        currentRole = "super_admin";
+        currentPermissions = perms;
+        localStorage.setItem("jj_role", currentRole);
+        localStorage.setItem("jj_permissions", currentPermissions);
+        if(document.getElementById("sidebarRole")) document.getElementById("sidebarRole").textContent = roleLabel(currentRole);
+      }
+    } else {
+      showToast("Permissions saved for "+name+"!","success");
+    }
     document.getElementById("permModal").remove();
     await loadAllUsers();
     renderUsers();
+    if(uid === currentUserId){ initApp(); }
   }catch(e){showToast("Failed: "+e.message,"error");}
 }
 
 async function promoteUser(id,name){
-  if(!confirm("Promote "+name+" to Super Admin?"))return;
-  try{
-    await api("/users/"+id+"/promote","PATCH");
-    showToast(name+" is now Super Admin ⭐","success");
-    await loadAllUsers();
-    renderUsers();
-    // Auto open permissions modal
-    setTimeout(()=>{
-      const users_list=document.querySelectorAll("tbody tr");
-      showToast("Set permissions for "+name+" using the 🔧 button","info");
-    },500);
-  }
-  catch(e){showToast("Failed: "+e.message,"error");}
+  if(!confirm("Are you sure you want to promote "+name+" to Super Admin?")) return;
+  openPermissionsModal(id, name, "", "promote");
 }
 async function demoteUser(id,name){
   if(!confirm("Demote "+name+" back to Intern?"))return;
-  try{await api("/users/"+id+"/demote","PATCH");showToast(name+" demoted to Intern","info");await loadAllUsers();renderUsers();}
-  catch(e){showToast("Failed: "+e.message,"error");}
+  try{
+    await api("/users/"+id+"/demote","PATCH");
+    showToast(name+" demoted to Intern","info");
+    if(id === currentUserId){
+      currentRole = "intern";
+      currentPermissions = "";
+      localStorage.setItem("jj_role", currentRole);
+      localStorage.setItem("jj_permissions", currentPermissions);
+      if(document.getElementById("sidebarRole")) document.getElementById("sidebarRole").textContent = roleLabel(currentRole);
+      initApp();
+    }
+    await loadAllUsers();
+    renderUsers();
+  }catch(e){showToast("Failed: "+e.message,"error");}
 }
 async function deleteUser(id,name){
   if(!confirm("Delete user "+name+"? This cannot be undone."))return;
@@ -1053,8 +1117,12 @@ async function deleteUser(id,name){
 // CANDIDATES
 // ════════════════════════════════════════════
 async function renderCandidates(){
+  if(!hasPermission("manage_candidates")){
+    document.getElementById("mainContent").innerHTML=`<div style="padding:40px;text-align:center;color:var(--text-muted)">Access denied. Candidates are not available without permission.</div>`;
+    return;
+  }
   let data=[];
-  try{data=await api("/candidates");}catch(e){showToast("Failed","error");return;}
+  try{data=await api("/candidates");}catch(e){showToast("Failed to load candidates","error");return;}
 
   // Super admin only sees approved candidates
   if(isSuperAdmin()) data=data.filter(c=>c.status==="Approved");
@@ -2319,7 +2387,21 @@ function renderChat(){
 }
 function loadChatUsers(){
   const list=document.getElementById("chatList");if(!list)return;
-  const others=allUsers.filter(u=>u.id!==currentUserId);
+  // Prefer highest role, then jobjockey.in — deduplicate by name so promoted users win
+  const rolePriority={admin:3,super_admin:2,intern:1};
+  const sorted=[...allUsers].sort((a,b)=>{
+    const rp=(rolePriority[b.role]||0)-(rolePriority[a.role]||0);
+    if(rp!==0) return rp;
+    return (b.email.endsWith("@jobjockey.in")?1:0)-(a.email.endsWith("@jobjockey.in")?1:0);
+  });
+  const seen=new Set();
+  const others=sorted.filter(u=>{
+    if(u.id===currentUserId) return false;
+    const key=u.name.toLowerCase().trim();
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   list.innerHTML=others.map((u,i)=>`
   <div class="chat-contact" id="cc_${u.id}" onclick="openChatWithUser(${u.id},'${u.name}')">
     <div class="cav" style="background:${COLORS[i%COLORS.length]}22;color:${COLORS[i%COLORS.length]};border-color:${COLORS[i%COLORS.length]}44">${u.name.slice(0,2).toUpperCase()}</div>
@@ -2390,8 +2472,20 @@ async function sendMessage(){
 function filterChats(q){document.querySelectorAll(".chat-contact").forEach(el=>el.style.display=el.textContent.toLowerCase().includes(q.toLowerCase())?"":"none");}
 function connectWS(uid){
   try{
-    ws=new WebSocket("ws://127.0.0.1:8000/ws/"+uid+"?token="+token);
-    ws.onmessage=async(e)=>{const m=JSON.parse(e.data);if(selectedReceiverId&&(m.sender_id===selectedReceiverId||m.receiver_id===selectedReceiverId))await fetchMessages(selectedReceiverId);};
+    const wsProto=location.protocol==="https:"?"wss:":"ws:";
+    ws=new WebSocket(`${wsProto}//${location.host}/ws/${uid}?token=${token}`);
+    ws.onmessage=async(e)=>{
+      const m=JSON.parse(e.data);
+      const isIncoming = m.receiver_id===currentUserId;
+      if(!isIncoming) return;
+      const sender = allUsers.find(u=>u.id===m.sender_id)?.name||"Someone";
+      if(selectedReceiverId===m.sender_id){
+        await fetchMessages(selectedReceiverId);
+        playNotifSound();
+      } else {
+        showChatNotification(sender,m.message);
+      }
+    };
     ws.onerror=()=>console.log("WS not available, using polling");
   }catch(e){}
 }
@@ -2487,7 +2581,7 @@ document.addEventListener("click",function(e){
   }
 });
 
-setInterval(pollNotifications, 30000);
+setInterval(pollNotifications, 8000);
 
 // ════════════════════════════════════════════
 // GROUPS
@@ -2499,10 +2593,24 @@ async function renderGroups(){
   const approvedCandidates = candidates.filter(c=>c.status==="Approved");
 
   // All assignable members = existing users (non-admin) + approved candidates not yet users
+  // Sort by role priority so super_admin wins dedup over intern duplicate
+  const _rp={super_admin:2,intern:1};
   const existingEmails = allUsers.map(u=>u.email);
+  const existingNames = allUsers.map(u=>u.name.toLowerCase().trim());
+  const sortedUsers=[...allUsers].sort((a,b)=>(_rp[b.role]||0)-(_rp[a.role]||0));
+  const seenNames=new Set();
+  const dedupedUsers=sortedUsers.filter(u=>{
+    if(u.role==="admin") return false;
+    const k=u.name.toLowerCase().trim();
+    if(seenNames.has(k)) return false;
+    seenNames.add(k); return true;
+  });
   const allMembers = [
-    ...allUsers.filter(u=>u.role!=="admin"),
-    ...approvedCandidates.filter(c=>!existingEmails.includes(c.email)).map(c=>({
+    ...dedupedUsers,
+    ...approvedCandidates.filter(c=>
+      !existingEmails.includes(c.email) &&
+      !existingNames.includes(c.name.toLowerCase().trim())
+    ).map(c=>({
       id: "c_"+c.id, name: c.name, email: c.email, role: "intern (approved candidate)"
     }))
   ];
@@ -2521,7 +2629,7 @@ async function renderGroups(){
       <!-- Searchable member selector -->
       <div class="field" style="margin:0">
         <label>Add Members <span style="color:var(--text-muted);font-weight:400;font-size:11px">(search and select)</span></label>
-        <input id="gMemberSearch" class="search-input" placeholder="🔍 Search by name or role..."
+        <input id="gMemberSearch" class="search-input" placeholder="🔍 Search by name or ID..."
           oninput="filterGroupMembers(this.value)"
           style="width:100%;margin-bottom:8px;box-sizing:border-box">
         <div id="gMemberDropdown" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface2)">
@@ -2531,7 +2639,7 @@ async function renderGroups(){
             <div style="width:28px;height:28px;border-radius:50%;background:${COLORS[i%COLORS.length]}22;color:${COLORS[i%COLORS.length]};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${u.name.slice(0,2).toUpperCase()}</div>
             <div>
               <div style="font-size:13px;font-weight:600">${u.name}</div>
-              <div style="font-size:11px;color:var(--text-muted)">${u.role} · ${u.email}</div>
+              <div style="font-size:11.5px;color:var(--text-muted)">@${u.email.split("@")[0]}</div>
             </div>
           </label>`).join("")}
         </div>
@@ -2590,12 +2698,11 @@ function renderGroupSelectedTags(){
     const email=cb.value;
     const label=cb.closest("label");
     const name=label?label.querySelector("div div:first-child")?.textContent.trim():email.split("@")[0];
-    const firstName=(name||email.split("@")[0]).split(" ")[0];
     const col=COLORS[idx%COLORS.length];
     return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:${col}18;border:1px solid ${col}44;color:${col};font-size:12px;font-weight:600;cursor:pointer"
       onclick="document.querySelector('.gMemberCheck[value=\\'${email}\\']').checked=false;renderGroupSelectedTags();updateBulkGroupCount()"
       title="Click to remove">
-      ${firstName} <span style="font-size:10px;opacity:0.6">✕</span>
+      ${name||email.split("@")[0]} <span style="font-size:10px;opacity:0.6">✕</span>
     </span>`;
   }).join("");
 }
@@ -2636,7 +2743,7 @@ async function loadGroups(){
         <h4>${g.name}</h4>
         <p style="color:var(--text-muted);font-size:12.5px">${g.description||""}</p>
         <div style="margin:10px 0;display:flex;flex-wrap:wrap;gap:4px">
-          ${memberUsers.length?memberUsers.map(u=>`<span style="font-size:11px;padding:2px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text-soft)">${u.name.split(" ")[0]}</span>`).join(""):`<span style="font-size:11px;color:var(--text-muted)">No members yet</span>`}
+          ${memberUsers.length?memberUsers.map(u=>`<span style="font-size:11px;padding:2px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;color:var(--text-soft)">${u.name}</span>`).join(""):`<span style="font-size:11px;color:var(--text-muted)">No members yet</span>`}
         </div>
         <div class="group-meta" style="margin-top:8px">
           <span style="font-size:12px;color:var(--text-muted)">${memberUsers.length} member${memberUsers.length!==1?"s":""}</span>
@@ -2656,8 +2763,16 @@ let gmGroupId=null, gmAdded=[], gmAll=[];
 function openManageMembers(gid, gname, currentMembers){
   gmGroupId=gid;
   gmAdded=[...currentMembers];
-  // Include all users + approved candidates
-  gmAll=allUsers.filter(u=>u.role!=="admin");
+  // Sort by role priority so super_admin wins dedup over intern with same name
+  const _gmRp={super_admin:2,intern:1};
+  const _gmSorted=[...allUsers].sort((a,b)=>(_gmRp[b.role]||0)-(_gmRp[a.role]||0));
+  const _gmSeen=new Set();
+  gmAll=_gmSorted.filter(u=>{
+    if(u.role==="admin") return false;
+    const k=u.name.toLowerCase().trim();
+    if(_gmSeen.has(k)) return false;
+    _gmSeen.add(k); return true;
+  });
 
   const ex=document.getElementById("manageMembersModal");
   if(ex)ex.remove();
@@ -2692,7 +2807,7 @@ function openManageMembers(gid, gname, currentMembers){
     <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
       <div style="position:relative">
         <span style="position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none">🔍</span>
-        <input id="gmSearch" placeholder="Search by name, email or role..." oninput="gmFilter(this.value)"
+        <input id="gmSearch" placeholder="Search by name or ID..." oninput="gmFilter(this.value)"
           style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px 9px 34px;color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
@@ -2732,8 +2847,8 @@ function gmRenderTags(){
       style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;background:${col}18;border:1px solid ${col}44;color:${col};font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;margin:2px"
       onmouseover="this.style.background='${col}33';this.style.borderColor='${col}88'"
       onmouseout="this.style.background='${col}18';this.style.borderColor='${col}44'">
-      <span style="width:20px;height:20px;border-radius:50%;background:${col}33;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${firstName.slice(0,2).toUpperCase()}</span>
-      ${firstName}
+      <span style="width:20px;height:20px;border-radius:50%;background:${col}33;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:800">${name.slice(0,2).toUpperCase()}</span>
+      ${name}
       <span style="font-size:11px;opacity:0.6">✕</span>
     </span>`;
   }).join("");
@@ -2746,21 +2861,30 @@ function gmRenderList(query=""){
   const filtered=gmAll.filter(u=>
     (!q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q))
   );
-  if(!filtered.length){
+  const uniqueByHandle=[];
+  const seenHandles=new Set();
+  filtered.forEach(u=>{
+    const handle=u.email.split("@")[0].toLowerCase();
+    if(!seenHandles.has(handle)){
+      seenHandles.add(handle);
+      uniqueByHandle.push(u);
+    }
+  });
+  if(!uniqueByHandle.length){
     avail.innerHTML=`<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:13px">No users match "${query}"</div>`;
     return;
   }
-  avail.innerHTML=filtered.map((u,i)=>{
+  avail.innerHTML=uniqueByHandle.map((u,i)=>{
     const isAdded=gmAdded.includes(u.email);
     const col=COLORS[gmAll.indexOf(u)%COLORS.length];
-    return `<div onclick="${isAdded?`gmRemove('${u.email}')`:`gmAdd('${u.email}')`}"
+    return `<div title="${u.name}" onclick="${isAdded?`gmRemove('${u.email}')`:`gmAdd('${u.email}')`}"
       style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;margin-bottom:3px;transition:background .15s;border:1px solid ${isAdded?col+'44':'transparent'};background:${isAdded?col+'0d':'transparent'}"
       onmouseover="this.style.background='${isAdded?col+'1a':'rgba(255,255,255,0.04)'}'"
       onmouseout="this.style.background='${isAdded?col+'0d':'transparent'}'">
       <div style="width:36px;height:36px;border-radius:50%;background:${col}22;color:${col};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${u.name.slice(0,2).toUpperCase()}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600">${u.name}</div>
-        <div style="font-size:11.5px;color:var(--text-muted)">${u.email} · ${u.role}</div>
+        <div style="font-size:11.5px;color:var(--text-muted)">@${u.email.split("@")[0]}</div>
       </div>
       <div style="font-size:13px;font-weight:700;flex-shrink:0;width:24px;text-align:center;color:${isAdded?'var(--red)':'var(--green)'}">${isAdded?'✕':'+'}</div>
     </div>`;
@@ -2775,7 +2899,12 @@ function gmAddAll(){ gmAll.forEach(u=>{if(!gmAdded.includes(u.email))gmAdded.pus
 function gmRemoveAll(){ gmAdded=[]; gmRender(); }
 function gmAddFiltered(){
   const q=(document.getElementById("gmSearch")?.value||"").toLowerCase();
-  gmAll.filter(u=>u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q)||u.role.toLowerCase().includes(q)).forEach(u=>{if(!gmAdded.includes(u.email))gmAdded.push(u.email);});
+  const handleMap=new Map();
+  gmAll.filter(u=>u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q)||u.role.toLowerCase().includes(q)).forEach(u=>{
+    const handle=u.email.split("@")[0].toLowerCase();
+    if(!handleMap.has(handle)) handleMap.set(handle,u);
+  });
+  [...handleMap.values()].forEach(u=>{if(!gmAdded.includes(u.email))gmAdded.push(u.email);});
   gmRender(q);
 }
 
@@ -2887,9 +3016,24 @@ function toggleAllMeetMembers(check){
   document.querySelectorAll("#mMemberChecks input[type=checkbox]").forEach(cb=>cb.checked=check);
 }
 
+function isValidGoogleMeet(url){
+  if(!url) return false;
+  try{
+    const parsed = new URL(url.trim());
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname.toLowerCase().includes("meet.google.com");
+  }catch(e){
+    return false;
+  }
+}
+
 async function createMeeting(){
   const title=document.getElementById("mTitle")?.value.trim();
   if(!title){showToast("Enter a meeting title","error");return;}
+  const meetLink=document.getElementById("mLink")?.value.trim();
+  if(meetLink && !isValidGoogleMeet(meetLink)){
+    showToast("Enter a valid Google Meet URL","error");
+    return;
+  }
   const checks=document.querySelectorAll("#mMemberChecks input[type=checkbox]:checked");
   const members=JSON.stringify(Array.from(checks).map(cb=>cb.value));
   const inviteCount=checks.length;
@@ -2899,7 +3043,7 @@ async function createMeeting(){
       description:document.getElementById("mDesc")?.value||"",
       date:document.getElementById("mDate")?.value||new Date().toISOString().split("T")[0],
       time:document.getElementById("mTime")?.value||"TBD",
-      meet_link:document.getElementById("mLink")?.value||"",
+      meet_link:meetLink,
       members
     });
     closeModal("meetModalDyn");
@@ -2919,7 +3063,7 @@ async function renderNotifications(){
   let data=[];
   try{data=await api("/notifications");}catch(e){}
   document.getElementById("mainContent").innerHTML=`
-  ${canManage()?`
+  ${hasPermission("send_notifications")?`
   <div class="table-card" style="margin-bottom:16px">
     <div class="table-card-header"><h3>📣 Send Notification</h3></div>
     <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -2951,7 +3095,7 @@ async function renderNotifications(){
         <h5>${n.title}</h5>
         <p>${n.body||""}</p>
         <div class="notif-time">${n.created_at?new Date(n.created_at).toLocaleString("en-IN"):"now"}</div>
-        ${canManage()?seenList.length?`
+        ${hasPermission("send_notifications")?seenList.length?`
         <div style="margin-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--text-muted)">👁 Seen by (${seenList.length}):</span>
           ${seenNames.map(name=>`<span style="font-size:11px;padding:2px 7px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);border-radius:20px;color:var(--green)">${name}</span>`).join("")}
@@ -2959,7 +3103,7 @@ async function renderNotifications(){
       </div>
       <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
         ${!n.read?`<button class="action-btn action-approve" onclick="markRead(${n.id})">✓ Read</button>`:""}
-        ${canManage()?`<button class="action-btn action-reject" onclick="deleteNotif(${n.id})">🗑</button>`:""}
+        ${hasPermission("send_notifications")?`<button class="action-btn action-reject" onclick="deleteNotif(${n.id})">🗑</button>`:""}
       </div>
     </div>`;
   }).join("")||`<div style="text-align:center;padding:40px;color:var(--text-muted)">No notifications yet</div>`}
@@ -3583,14 +3727,28 @@ window.onload=async ()=>{
   try{
     const savedToken = localStorage.getItem("jj_token");
     const savedRole  = localStorage.getItem("jj_role");
+    const savedPerms = localStorage.getItem("jj_permissions");
     const savedUser  = localStorage.getItem("jj_user");
     const savedUid   = localStorage.getItem("jj_uid");
 
     if(savedToken && savedRole && savedUser){
-      token         = savedToken;
-      currentRole   = savedRole;
-      currentUser   = savedUser;
-      currentUserId = parseInt(savedUid) || null;
+      token              = savedToken;
+      try{
+        const me = await api("/users/me");
+        currentRole        = me.role;
+        currentPermissions = me.permissions || "";
+        currentUser        = me.name;
+        currentUserId      = me.id;
+        localStorage.setItem("jj_role", currentRole);
+        localStorage.setItem("jj_permissions", currentPermissions);
+        localStorage.setItem("jj_user", currentUser);
+        localStorage.setItem("jj_uid", currentUserId);
+      }catch(e){
+        currentRole        = savedRole;
+        currentPermissions = savedPerms || "";
+        currentUser        = savedUser;
+        currentUserId      = parseInt(savedUid) || null;
+      }
 
       try{ await loadAllUsers(); }catch(e){ console.log("Users load failed:", e); }
 

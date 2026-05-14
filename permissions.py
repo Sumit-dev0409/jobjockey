@@ -3,4 +3,4 @@ def has_permission(user, perm: str) -> bool:
         return True
     if not user.permissions:
         return False
-    return perm in user.permissions
+    return perm in [p.strip() for p in user.permissions.split(",") if p.strip()]

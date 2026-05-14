@@ -17,24 +17,15 @@ from email.mime.text import MIMEText
 from fastapi.staticfiles import StaticFiles
 from database import SessionLocal, engine
 import models, schemas
+from permissions import has_permission
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Job Jockey API", version="3.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "null",  # file:// protocol (opening HTML directly from disk)
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -65,12 +56,19 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 def require_admin(user: models.User = Depends(get_current_user)):
-    if user.role not in ("admin", "super_admin"): raise HTTPException(403, "Admin access required")
+    if user.role != "admin": raise HTTPException(403, "Admin access required")
     return user
 
 def require_boss(user: models.User = Depends(get_current_user)):
     if user.role != "admin": raise HTTPException(403, "Only admin (boss) can do this")
     return user
+
+def require_permission(permission: str):
+    def checker(user: models.User = Depends(get_current_user)):
+        if not has_permission(user, permission):
+            raise HTTPException(403, "No permission")
+        return user
+    return checker
 
 # ── WebSocket ────────────────────────────────────
 class ConnectionManager:
@@ -205,7 +203,7 @@ def promote(user_id: int, db: Session = Depends(get_db), user=Depends(require_bo
     if not t: raise HTTPException(404, "Not found")
     if t.role == "admin": raise HTTPException(400, "Cannot change admin")
     t.role = "super_admin"
-    t.permissions = "create_task,delete_task,manage_attendance,view_reports,manage_groups,manage_meetings"
+    # Keep any permissions already assigned by the frontend; do not grant all by default.
     db.commit()
     return {"msg": f"{t.name} promoted to Super Admin"}
 
@@ -236,7 +234,10 @@ def delete_user(user_id: int, db: Session = Depends(get_db), user=Depends(requir
 # ════════════════════════════════════════════════
 # TASKS
 # ════════════════════════════════════════════════
-def can_create_task(user): return user.role in ("admin","super_admin") or "create_task" in (user.permissions or "")
+def can_create_task(user): return has_permission(user, "create_task")
+
+def can_view_all_tasks(user):
+    return user.role == "admin" or any(has_permission(user, p) for p in ["create_task", "delete_task", "view_reports"])
 
 @app.post("/tasks", response_model=schemas.TaskOut)
 def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -257,7 +258,7 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db), user=De
 
 @app.get("/tasks", response_model=List[schemas.TaskOut])
 def get_tasks(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    if user.role in ("admin","super_admin"): return db.query(models.Task).all()
+    if can_view_all_tasks(user): return db.query(models.Task).all()
     return db.query(models.Task).filter(models.Task.assigned_to == user.email).all()
 
 @app.patch("/tasks/{task_id}", response_model=schemas.TaskOut)
@@ -270,7 +271,7 @@ def update_task(task_id: int, data: schemas.TaskUpdate, db: Session = Depends(ge
 
 @app.delete("/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    if user.role not in ("admin","super_admin") and "delete_task" not in (user.permissions or ""):
+    if not has_permission(user, "delete_task"):
         raise HTTPException(403, "No permission")
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task: raise HTTPException(404, "Not found")
@@ -280,7 +281,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), user=Depends(get_cu
 # PROJECTS
 # ════════════════════════════════════════════════
 @app.post("/projects", response_model=schemas.ProjectOut)
-def create_project(data: schemas.ProjectCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def create_project(data: schemas.ProjectCreate, db: Session = Depends(get_db), user=Depends(require_permission("manage_projects"))):
     p = models.Project(**data.dict(), created_by=user.email)
     db.add(p); db.commit(); db.refresh(p); return p
 
@@ -289,7 +290,7 @@ def get_projects(db: Session = Depends(get_db), user=Depends(get_current_user)):
     return db.query(models.Project).all()
 
 @app.patch("/projects/{pid}", response_model=schemas.ProjectOut)
-def update_project(pid: int, data: schemas.ProjectUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def update_project(pid: int, data: schemas.ProjectUpdate, db: Session = Depends(get_db), user=Depends(require_permission("manage_projects"))):
     p = db.query(models.Project).filter(models.Project.id == pid).first()
     if not p: raise HTTPException(404, "Not found")
     for k, v in data.dict(exclude_none=True).items(): setattr(p, k, v)
@@ -309,14 +310,14 @@ def add_candidate(data: schemas.CandidateCreate, db: Session = Depends(get_db)):
     c = models.Candidate(**data.dict()); db.add(c); db.commit(); db.refresh(c); return c
 
 @app.get("/candidates", response_model=List[schemas.CandidateOut])
-def get_candidates(db: Session = Depends(get_db), user=Depends(require_admin)):
+def get_candidates(db: Session = Depends(get_db), user=Depends(require_permission("manage_candidates"))):
     return db.query(models.Candidate).all()
 
 @app.get("/google-forms/responses")
 def google_forms_responses(
     sheet_id: str,
     sheet_name: Optional[str] = None,
-    user=Depends(require_admin)
+    user=Depends(require_permission("manage_candidates"))
 ):
     if sheet_id.lower() == "e" or len(sheet_id) < 20:
         raise HTTPException(400, "Invalid Google Sheets ID. Use the response spreadsheet URL, not the Google Form link.")
@@ -327,7 +328,7 @@ def google_forms_responses(
     return {"sheet_id": sheet_id, "sheet_name": sheet_name or "default", "count": len(rows), "responses": rows}
 
 @app.post("/google-forms/import-candidates")
-def import_google_form_candidates(data: schemas.GoogleFormImportRequest, db: Session = Depends(get_db), user=Depends(require_admin)):
+def import_google_form_candidates(data: schemas.GoogleFormImportRequest, db: Session = Depends(get_db), user=Depends(require_permission("manage_candidates"))):
     try:
         rows = fetch_google_form_responses(data.sheet_id, data.sheet_name)
     except ValueError as exc:
@@ -365,7 +366,7 @@ def import_google_form_candidates(data: schemas.GoogleFormImportRequest, db: Ses
     return {"created": created, "skipped": skipped, "total_rows": len(rows)}
 
 @app.patch("/candidates/{cid}", response_model=schemas.CandidateOut)
-def update_candidate(cid: int, data: schemas.CandidateUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def update_candidate(cid: int, data: schemas.CandidateUpdate, db: Session = Depends(get_db), user=Depends(require_permission("manage_candidates"))):
     c = db.query(models.Candidate).filter(models.Candidate.id == cid).first()
     if not c: raise HTTPException(404, "Not found")
     for k, v in data.dict(exclude_none=True).items(): setattr(c, k, v)
@@ -439,7 +440,9 @@ def delete_candidate(cid: int, db: Session = Depends(get_db), user=Depends(requi
 # ════════════════════════════════════════════════
 @app.post("/attendance", response_model=schemas.AttendanceOut)
 def mark_attendance(data: schemas.AttendanceMark, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    target = data.email if (user.role in ("admin","super_admin") and data.email) else user.email
+    target = data.email if data.email else user.email
+    if target != user.email and not has_permission(user, "manage_attendance"):
+        raise HTTPException(403, "No permission")
     existing = db.query(models.Attendance).filter(
         models.Attendance.email == target,
         models.Attendance.date  == data.date
@@ -473,12 +476,14 @@ def submit_report(data: schemas.ReportCreate, db: Session = Depends(get_db), use
 
 @app.get("/reports", response_model=List[schemas.ReportOut])
 def get_reports(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    q = db.query(models.Report)
-    if user.role == "intern": q = q.filter(models.Report.submitted_by == user.email)
-    return q.all()
+    if user.role == "intern":
+        return db.query(models.Report).filter(models.Report.submitted_by == user.email).all()
+    if not has_permission(user, "view_reports"):
+        raise HTTPException(403, "No permission")
+    return db.query(models.Report).all()
 
 @app.patch("/reports/{rid}")
-def review_report(rid: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+def review_report(rid: int, db: Session = Depends(get_db), user=Depends(require_permission("view_reports"))):
     r = db.query(models.Report).filter(models.Report.id == rid).first()
     if not r: raise HTTPException(404, "Not found")
     r.reviewed = True; db.commit(); return {"msg": "Reviewed"}
@@ -487,7 +492,7 @@ def review_report(rid: int, db: Session = Depends(get_db), user=Depends(require_
 # GROUPS
 # ════════════════════════════════════════════════
 @app.post("/groups", response_model=schemas.GroupOut)
-def create_group(data: schemas.GroupCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def create_group(data: schemas.GroupCreate, db: Session = Depends(get_db), user=Depends(require_permission("manage_groups"))):
     g = models.Group(**data.dict(), created_by=user.email)
     db.add(g); db.commit(); db.refresh(g); return g
 
@@ -496,7 +501,7 @@ def get_groups(db: Session = Depends(get_db), user=Depends(get_current_user)):
     return db.query(models.Group).all()
 
 @app.patch("/groups/{gid}/members")
-def update_group_members(gid: int, data: dict, db: Session = Depends(get_db), user=Depends(require_admin)):
+def update_group_members(gid: int, data: dict, db: Session = Depends(get_db), user=Depends(require_permission("manage_groups"))):
     g = db.query(models.Group).filter(models.Group.id == gid).first()
     if not g: raise HTTPException(404, "Not found")
     g.members = json.dumps(data.get("members", []))
@@ -512,8 +517,22 @@ def delete_group(gid: int, db: Session = Depends(get_db), user=Depends(require_b
 # ════════════════════════════════════════════════
 # MEETINGS
 # ════════════════════════════════════════════════
+def is_valid_meet_link(url: str) -> bool:
+    if not url: return True
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        if parsed.scheme not in ("http", "https"):
+            return False
+        if not parsed.netloc:
+            return False
+        return "meet.google.com" in parsed.netloc.lower()
+    except Exception:
+        return False
+
 @app.post("/meetings", response_model=schemas.MeetingOut)
-def create_meeting(data: schemas.MeetingCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def create_meeting(data: schemas.MeetingCreate, db: Session = Depends(get_db), user=Depends(require_permission("manage_meetings"))):
+    if data.meet_link and not is_valid_meet_link(data.meet_link):
+        raise HTTPException(400, "Enter a valid Google Meet URL")
     m = models.Meeting(**data.dict(), created_by=user.email)
     db.add(m); db.commit(); db.refresh(m)
     try:    member_emails = json.loads(data.members or "[]")
@@ -529,10 +548,32 @@ def create_meeting(data: schemas.MeetingCreate, db: Session = Depends(get_db), u
 
 @app.get("/meetings", response_model=List[schemas.MeetingOut])
 def get_meetings(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return db.query(models.Meeting).all()
+    if user.role == "intern":
+        meetings = db.query(models.Meeting).all()
+        filtered = []
+        for m in meetings:
+            try:
+                members = json.loads(m.members or "[]")
+            except Exception:
+                members = []
+            if user.email in members:
+                filtered.append(m)
+        return filtered
+    if has_permission(user, "manage_meetings"):
+        return db.query(models.Meeting).all()
+    meetings = db.query(models.Meeting).all()
+    filtered = []
+    for m in meetings:
+        try:
+            members = json.loads(m.members or "[]")
+        except Exception:
+            members = []
+        if user.email in members or m.created_by == user.email:
+            filtered.append(m)
+    return filtered
 
 @app.patch("/meetings/{mid}", response_model=schemas.MeetingOut)
-def update_meeting(mid: int, data: dict, db: Session = Depends(get_db), user=Depends(require_admin)):
+def update_meeting(mid: int, data: dict, db: Session = Depends(get_db), user=Depends(require_permission("manage_meetings"))):
     m = db.query(models.Meeting).filter(models.Meeting.id == mid).first()
     if not m: raise HTTPException(404, "Not found")
     for k, v in data.items():
@@ -549,7 +590,7 @@ def delete_meeting(mid: int, db: Session = Depends(get_db), user=Depends(require
 # NOTIFICATIONS
 # ════════════════════════════════════════════════
 @app.post("/notifications", response_model=schemas.NotificationOut)
-def create_notification(data: schemas.NotificationCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
+def create_notification(data: schemas.NotificationCreate, db: Session = Depends(get_db), user=Depends(require_permission("send_notifications"))):
     n = models.Notification(**data.dict())
     db.add(n); db.commit(); db.refresh(n); return n
 
@@ -577,7 +618,7 @@ def mark_read(nid: int, db: Session = Depends(get_db), user=Depends(get_current_
     return {"msg": "Read"}
 
 @app.get("/notifications/{nid}/seen-by")
-def get_seen_by(nid: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+def get_seen_by(nid: int, db: Session = Depends(get_db), user=Depends(require_permission("send_notifications"))):
     n = db.query(models.Notification).filter(models.Notification.id == nid).first()
     if not n: raise HTTPException(404, "Not found")
     try:
@@ -592,7 +633,7 @@ def get_seen_by(nid: int, db: Session = Depends(get_db), user=Depends(require_ad
     return {"notification_id": nid, "title": n.title, "seen_by": users, "total": len(users)}
 
 @app.delete("/notifications/{nid}")
-def delete_notification(nid: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+def delete_notification(nid: int, db: Session = Depends(get_db), user=Depends(require_permission("send_notifications"))):
     n = db.query(models.Notification).filter(models.Notification.id == nid).first()
     if not n: raise HTTPException(404, "Not found")
     db.delete(n); db.commit(); return {"msg": "Deleted"}
@@ -607,8 +648,20 @@ async def send_message(data: schemas.MessageCreate, db: Session = Depends(get_db
     msg = models.ChatMessage(sender_id=user.id, receiver_id=data.receiver_id, message=data.message)
     db.add(msg); db.commit(); db.refresh(msg)
     out = schemas.MessageOut.from_orm(msg).dict()
-    if data.receiver_id == 0: await manager.broadcast(out)
-    else: await manager.send_to(data.receiver_id, out)
+    if data.receiver_id == 0:
+        await manager.broadcast(out)
+    else:
+        await manager.send_to(data.receiver_id, out)
+        receiver = db.query(models.User).filter(models.User.id == data.receiver_id).first()
+        if receiver:
+            preview = data.message[:80] + "..." if len(data.message) > 80 else data.message
+            db.add(models.Notification(
+                title=f"💬 {user.name}",
+                body=preview,
+                icon="💬",
+                target_email=receiver.email
+            ))
+            db.commit()
     return msg
 
 @app.get("/messages/{other_id}", response_model=List[schemas.MessageOut])
@@ -668,7 +721,7 @@ def change_password(data: dict, db: Session = Depends(get_db), user=Depends(get_
 # PRODUCTIVITY
 # ════════════════════════════════════════════════
 @app.get("/productivity")
-def get_productivity(db: Session = Depends(get_db), user=Depends(require_admin)):
+def get_productivity(db: Session = Depends(get_db), user=Depends(require_permission("view_productivity"))):
     users   = db.query(models.User).filter(models.User.role.in_(["intern","super_admin"])).all()
     tasks   = db.query(models.Task).all()
     att     = db.query(models.Attendance).all()
