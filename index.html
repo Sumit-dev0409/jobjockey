@@ -478,7 +478,7 @@
 
 
 <script>
-const API_URL = "https://web-production-9a38e.up.railway.app";
+const API_URL = window.location.origin;
 let token="", currentRole="", currentUser="", currentSection="";
 let currentPermissions="", currentUserId=null, selectedReceiverId=null, ws=null;
 let allUsers=[], chatCharts={}, calDate=new Date();
