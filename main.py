@@ -1,5 +1,5 @@
 """
-Job Jockey — FastAPI Backend (Final Version 3.1)
+Job Jockey — FastAPI Backend (Final Version 3.2)
 Roles: admin (boss) > super_admin > intern
 """
 
