@@ -1256,7 +1256,7 @@ async function renderCandidates(){
     <!-- ── TOP HEADER ROW ── -->
     <div class="table-card-header" style="flex-wrap:wrap;gap:10px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <h3 id="candidateTabTitle">Applicants <span style="font-size:12px;color:var(--text-muted);font-family:'DM Sans',sans-serif;font-weight:400">(${data.length} total)</span></h3>
+        <h3 id="candidateTabTitle">Applicants</h3>
         <!-- Switch tabs -->
         <div style="display:flex;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px;gap:2px">
           <button id="tabApplicants" onclick="setCandidateTab('applicants')"
@@ -1731,7 +1731,7 @@ function setCandidateTab(tab){
     btnA.style.background = "var(--accent)"; btnA.style.color = "#000";
     btnB.style.background = "transparent";   btnB.style.color = "var(--text-muted)";
     document.getElementById("candidateTabTitle").innerHTML =
-      'Applicants <span style="font-size:12px;color:var(--text-muted);font-weight:400">All Applications</span>';
+      'Applicants';
     // Show pending/rejected only — re-apply current filter (default hides Approved)
     const filterVal = document.getElementById("candidateStatusFilter")?.value || "";
     filterCandidatesByStatus(filterVal);
