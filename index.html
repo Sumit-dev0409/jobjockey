@@ -1739,7 +1739,7 @@ function setCandidateTab(tab){
     btnB.style.background = "var(--accent)"; btnB.style.color = "#000";
     btnA.style.background = "transparent";   btnA.style.color = "var(--text-muted)";
     document.getElementById("candidateTabTitle").innerHTML =
-      'Approved Interns <span style="font-size:12px;color:var(--text-muted);font-weight:400">Elected candidates</span>';
+      'Approved Interns';
     // Show only rows whose status cell (col 5) says Approved
     document.querySelectorAll("#candidateBody tr").forEach(row=>{
       const cells = row.querySelectorAll("td");
