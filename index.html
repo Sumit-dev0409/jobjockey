@@ -1667,7 +1667,7 @@ async function updateCandidate(id,status){
       if(c.resume&&c.resume.startsWith("LOGIN:")){
         const parts=c.resume.replace("LOGIN:","").split("|PASS:");
         jjEmail=parts[0]||"";
-        jjPass="123";
+        jjPass=parts[1]||"123";
       }
       // Fallback: generate from name same way as backend
       if(!jjEmail){
@@ -1681,7 +1681,7 @@ async function updateCandidate(id,status){
         "You have been selected as an Intern for Job Jockey.\n\n"+
         "Your Login Credentials:\n"+
         "Email    : "+jjEmail+"\n"+
-        "Password : 123 (same as all users)\n"+"\n\n"+
+        "Password : "+jjPass+"\n\n"+
         "Please login using above credentials and change your password after first login.\n\n"+
         "We look forward to working with you!\n\n"+
         "Best regards,\n"+
@@ -3830,7 +3830,7 @@ async function sendCustomEmail(){
 
 function useTemplate(type){
   const t = {
-    welcome:   { subject:"Welcome to Job Jockey!", body:"Congratulations! Your application has been approved.\n\nYou have been selected as an intern at Job Jockey.\n\nLogin Details:\nEmail: [your jobjockey email]\nPassword: Welcome@123\n\nPlease login and change your password.\n\nBest regards,\nJob Jockey Team" },
+    welcome:   { subject:"Welcome to Job Jockey!", body:"Congratulations! Your application has been approved.\n\nYou have been selected as an intern at Job Jockey.\n\nLogin Details:\nEmail: [your jobjockey email]\nPassword: 123\n\nPlease login and change your password.\n\nBest regards,\nJob Jockey Team" },
     interview: { subject:"Interview Invitation — Job Jockey", body:"Dear Candidate,\n\nWe would like to invite you for an interview.\n\nDate: [Date]\nTime: [Time]\nMode: Google Meet\nLink: [Link]\n\nPlease confirm your availability.\n\nBest regards,\nJob Jockey Team" },
     followup:  { subject:"Application Update — Job Jockey", body:"Dear Candidate,\n\nThis is regarding your application at Job Jockey.\n\n[Add your message here]\n\nThank you.\n\nBest regards,\nJob Jockey Team" },
     reject:    { subject:"Application Status — Job Jockey", body:"Dear Candidate,\n\nThank you for applying to Job Jockey.\n\nWe regret to inform you that we will not be moving forward with your application at this time.\n\nWe wish you the best in your career.\n\nBest regards,\nJob Jockey Team" }
