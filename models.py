@@ -51,6 +51,7 @@ class Candidate(Base):
     phone      = Column(String, default="")
     skill      = Column(String, default="")
     resume     = Column(String, default="")
+    resume_link = Column(String, default="")               # Resume URL link
     status     = Column(String, default="Pending")
     state      = Column(String, default="")
     college    = Column(String, default="")

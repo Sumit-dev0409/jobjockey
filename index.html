@@ -2874,7 +2874,7 @@ function buildNotifPopupList(data){
   list.innerHTML=recent.map(n=>{
     const nav=getNotifNav(n);
     const onclick=nav
-      ? `markNotifRead(${n.id});closeNotifPopup();navTo('${nav}')`
+      ? `peekNotification(${n.id},'${nav}')`
       : `markNotifRead(${n.id});closeNotifPopup();navTo('notifications')`;
     return `<div class="notif-popup-item ${n.read?"":"unread"}" onclick="${onclick}" style="cursor:pointer">
       <div class="notif-popup-title">${n.icon||"🔔"} ${n.title}</div>
@@ -2902,6 +2902,48 @@ function closeNotifPopup(){
   _notifPopupOpen=false;
   const popup=document.getElementById("notifPopup");
   if(popup) popup.classList.remove("open");
+}
+
+async function peekNotification(notifId, nav){
+  await markNotifRead(notifId);
+  
+  // Close notification popup
+  _notifPopupOpen = false;
+  const popup = document.getElementById("notifPopup");
+  if(popup) popup.classList.remove("open");
+  
+  // Save current main content
+  const mainContent = document.getElementById("mainContent");
+  const savedContent = mainContent.innerHTML;
+  const savedClasses = mainContent.className;
+  
+  // Call the render function directly
+  const renders={
+    dashboard:renderDashboard,users:renderUsers,candidates:renderCandidates,tasks:renderTasks,
+    projects:renderProjects,attendance:renderAttendance,reports:renderReports,worklogs:renderWorkLogs,
+    productivity:renderProductivity,chat:renderChat,groups:renderGroups,meetings:renderMeetings,
+    calendar:renderCalendar,notifications:renderNotifications,mytasks:renderMyTasks,
+    settings:renderSettings,changepassword:renderChangePassword
+  };
+  
+  // Temporarily change section
+  const oldSection = currentSection;
+  currentSection = nav;
+  if(renders[nav]) renders[nav]();
+  
+  // Peek for 1.5 seconds
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // Restore content
+  currentSection = oldSection;
+  mainContent.innerHTML = savedContent;
+  mainContent.className = savedClasses;
+  
+  // Reopen notification popup
+  await new Promise(resolve => setTimeout(resolve, 100));
+  _notifPopupOpen = true;
+  if(popup) popup.classList.add("open");
+  try{const data = await api("/notifications");buildNotifPopupList(data);}catch(e){}
 }
 
 // Close popup when clicking outside
@@ -3843,7 +3885,7 @@ async function renderInternSettings(tab){
   if(tab==="password"){ renderSettingsTab("password", tabBar); return; }
 
   // Edit Info tab
-  let info={phone:"",skill:"",state:"",college:"",edu_domain:"",name:currentUser,duration:""};
+  let info={phone:"",skill:"",state:"",college:"",edu_domain:"",name:currentUser,duration:"",resume_link:""};
   try{ info=await api("/candidates/me"); }catch(e){}
 
   document.getElementById("mainContent").innerHTML=tabBar+`
@@ -3882,6 +3924,13 @@ async function renderInternSettings(tab){
         <input id="ei_edu" value="${info.edu_domain||""}" placeholder="e.g. Computer Science"
           style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
+      <div class="field" style="margin:0">
+        <label>📄 Resume Link <span style="font-size:11px;color:var(--text-muted)">(PDF, Google Drive, GitHub, etc.)</span></label>
+        <input id="ei_resume_link" value="${info.resume_link||""}" type="url" placeholder="https://drive.google.com/file/d/... or https://github.com/..."
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
+        <div id="resumeLinkValidation" style="font-size:12px;margin-top:4px;color:var(--text-muted)"></div>
+        ${info.resume_link?`<div style="margin-top:8px"><a href="${info.resume_link}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:12px">🔗 View Current Resume →</a></div>`:""}
+      </div>
       <button class="btn-sm btn-accent" onclick="saveInternInfo()" style="align-self:flex-start;padding:10px 24px">💾 Save Changes</button>
       <div id="eiStatus" style="font-size:13px"></div>
     </div>
@@ -3893,11 +3942,12 @@ async function saveInternInfo(){
   status.innerHTML=`<span style="color:var(--accent)">⏳ Saving...</span>`;
   try{
     await api("/candidates/me","PATCH",{
-      phone:     document.getElementById("ei_phone")?.value.trim()||"",
-      skill:     document.getElementById("ei_skill")?.value.trim()||"",
-      state:     document.getElementById("ei_state")?.value.trim()||"",
-      college:   document.getElementById("ei_college")?.value.trim()||"",
-      edu_domain:document.getElementById("ei_edu")?.value.trim()||""
+      phone:       document.getElementById("ei_phone")?.value.trim()||"",
+      skill:       document.getElementById("ei_skill")?.value.trim()||"",
+      state:       document.getElementById("ei_state")?.value.trim()||"",
+      college:     document.getElementById("ei_college")?.value.trim()||"",
+      edu_domain:  document.getElementById("ei_edu")?.value.trim()||"",
+      resume_link: document.getElementById("ei_resume_link")?.value.trim()||""
     });
     status.innerHTML=`<span style="color:var(--green)">✅ Info updated!</span>`;
     showToast("Profile updated!","success");

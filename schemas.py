@@ -110,6 +110,7 @@ class CandidateCreate(BaseModel):
     phone: Optional[str] = ""
     skill: Optional[str] = ""
     resume: Optional[str] = ""
+    resume_link: Optional[str] = ""
     state: Optional[str] = ""
     college: Optional[str] = ""
     edu_domain: Optional[str] = ""
@@ -126,6 +127,7 @@ class CandidateUpdate(BaseModel):
     edu_domain: Optional[str] = None
     duration: Optional[str] = None
     resume: Optional[str] = None
+    resume_link: Optional[str] = None
 
 class CandidateOut(BaseModel):
     id: int
@@ -134,6 +136,7 @@ class CandidateOut(BaseModel):
     phone: Optional[str] = ""
     skill: Optional[str] = ""
     resume: Optional[str] = ""
+    resume_link: Optional[str] = ""
     status: str
     state: Optional[str] = ""
     college: Optional[str] = ""

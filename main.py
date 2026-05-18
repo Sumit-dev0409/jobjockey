@@ -411,7 +411,7 @@ def get_my_candidate(db: Session = Depends(get_db), user=Depends(get_current_use
     if not c: raise HTTPException(404, "No candidate record found")
     return {"phone": c.phone or "", "skill": c.skill or "", "state": c.state or "",
             "college": c.college or "", "edu_domain": c.edu_domain or "",
-            "name": c.name, "email": c.email, "duration": c.duration or ""}
+            "name": c.name, "email": c.email, "duration": c.duration or "", "resume_link": c.resume_link or ""}
 
 @app.patch("/candidates/me")
 def update_my_candidate(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -419,7 +419,7 @@ def update_my_candidate(data: dict, db: Session = Depends(get_db), user=Depends(
         models.Candidate.resume.like(f"LOGIN:{user.email}|PASS:%")
     ).first()
     if not c: raise HTTPException(404, "No candidate record found")
-    for k in ("phone", "skill", "state", "college", "edu_domain"):
+    for k in ("phone", "skill", "state", "college", "edu_domain", "resume_link"):
         if k in data and data[k] is not None:
             setattr(c, k, data[k])
     db.commit()
