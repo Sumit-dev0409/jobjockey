@@ -6,6 +6,7 @@
 <title>Job Jockey — Intern Collaboration Platform</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg: #080d1a;
@@ -1290,9 +1291,9 @@ async function renderCandidates(){
         <!-- Upload CSV -->
         <label style="cursor:pointer" title="Upload CSV file">
           <span class="btn-sm btn-outline" style="display:inline-flex;align-items:center;gap:5px">
-            📁 Upload CSV
+            📁 Upload CSV / Excel
           </span>
-          <input type="file" accept=".csv" id="csvFileInput" style="display:none" onchange="handleCsvUpload(event)">
+          <input type="file" accept=".csv,.xlsx,.xls" id="csvFileInput" style="display:none" onchange="handleCsvUpload(event)">
         </label>
         <!-- Google Form Sync button -->
         <button class="btn-sm btn-outline" onclick="toggleSyncPanel()" id="syncToggleBtn" style="display:inline-flex;align-items:center;gap:5px">
@@ -1338,32 +1339,36 @@ async function renderCandidates(){
         </div>
       </div>
 
-      <!-- Column Mapping -->
+      <!-- Auto-mapping summary -->
       <div id="columnMapSection" style="display:none;margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:10px">Map your form columns</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px" id="columnMapGrid"></div>
-        <div style="margin-top:12px;display:flex;gap:8px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">🔍 Auto-detected Column Mapping</div>
+        <div id="columnMapGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;align-items:center">
           <button class="btn-sm btn-accent" onclick="importMappedData()">✓ Import Candidates</button>
           <button class="btn-sm btn-outline" onclick="document.getElementById('columnMapSection').style.display='none'">Cancel</button>
         </div>
       </div>
     </div>
 
-    <!-- ── CSV UPLOAD PREVIEW (collapsible) ── -->
+    <!-- ── CSV / EXCEL UPLOAD PREVIEW ── -->
     <div id="csvPreviewPanel" style="display:none;padding:16px 20px;border-bottom:1px solid var(--border);background:rgba(59,130,246,0.04)">
-      <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">📁 CSV Upload Preview</div>
-      <div id="csvPreviewStatus" style="font-size:12px;color:var(--text-muted);margin-bottom:8px"></div>
-      <div style="overflow-x:auto;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">📁 Import Preview</div>
+        <div id="csvPreviewStatus" style="font-size:12px;color:var(--text-muted)"></div>
+      </div>
+      <!-- Auto-mapping summary -->
+      <div id="csvMapSummary" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin-bottom:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px"></div>
+      <!-- Mapped data preview table -->
+      <div style="overflow-x:auto;max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
         <table style="font-size:12px;width:100%">
           <thead id="csvPreviewHead"></thead>
           <tbody id="csvPreviewBody"></tbody>
         </table>
       </div>
-      <!-- CSV Column Map -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px" id="csvMapGrid"></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn-sm btn-accent" onclick="importCsvData()">✓ Import from CSV</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-sm btn-accent" onclick="importCsvData()">✓ Import All</button>
         <button class="btn-sm btn-outline" onclick="document.getElementById('csvPreviewPanel').style.display='none'">Cancel</button>
+        <span id="csvImportNote" style="font-size:11px;color:var(--text-muted)"></span>
       </div>
     </div>
 
@@ -1441,94 +1446,170 @@ function toggleSyncPanel(){
   document.getElementById("syncToggleBtn").style.color=isOpen?"var(--text-soft)":"var(--accent)";
 }
 
-// ── CSV FILE UPLOAD ───────────────────────────
-let csvRows=[], csvHeaders=[];
+// ── CSV / EXCEL FILE UPLOAD ───────────────────────────
+let csvRows=[], csvHeaders=[], csvFieldMap={};
+
+// All candidate fields with keyword matchers
+const CSV_FIELDS=[
+  {key:"name",       label:"Name",        required:true,  icon:"👤", kw:["name","full name","student name","candidate","applicant","intern name"]},
+  {key:"email",      label:"Email",       required:true,  icon:"📧", kw:["email","e-mail","mail","email address","email id"]},
+  {key:"phone",      label:"Phone",       required:false, icon:"📱", kw:["phone","mobile","contact","cell","phone no","mobile no","contact no","whatsapp"]},
+  {key:"skill",      label:"Skills/Role", required:false, icon:"💼", kw:["skill","role","position","domain","area","interest","stream","apply","applying","applying for","internship role","field"]},
+  {key:"college",    label:"College",     required:false, icon:"🏫", kw:["college","university","institution","institute","school","campus","college name","university name"]},
+  {key:"state",      label:"State",       required:false, icon:"📍", kw:["state","location","city","place","address","from","hometown","district"]},
+  {key:"edu_domain", label:"Branch",      required:false, icon:"🎓", kw:["branch","department","course","degree","specialization","edu","field of study","program","programme","study"]},
+  {key:"duration",   label:"Duration",    required:false, icon:"📅", kw:["duration","period","months","weeks","internship duration","tenure","how long","availability"]},
+  {key:"resume_link",label:"Resume Link", required:false, icon:"📄", kw:["resume","cv","portfolio","drive link","resume link","attachment","document","gdrive","google drive"]},
+];
+
+function _autoMapFields(headers){
+  const map={}, used=new Set();
+  for(const field of CSV_FIELDS){
+    for(let i=0;i<headers.length;i++){
+      if(used.has(i)) continue;
+      const hl=headers[i].toLowerCase().trim();
+      if(field.kw.some(kw=>hl.includes(kw)||kw.includes(hl))){
+        map[field.key]=i; used.add(i); break;
+      }
+    }
+  }
+  return map;
+}
+
+function _parseExcel(buffer){
+  const wb=XLSX.read(buffer,{type:"array"});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+  return data.filter(r=>r.length>0).map(r=>r.map(c=>String(c??"")));
+}
+
+function _parseCsv(text){
+  return text.trim().split(/\r?\n/).map(line=>{
+    const result=[]; let cur="", inQ=false;
+    for(const ch of line){
+      if(ch==='"'&&!inQ){inQ=true;continue;}
+      if(ch==='"'&&inQ){inQ=false;continue;}
+      if(ch===","&&!inQ){result.push(cur.trim());cur="";continue;}
+      cur+=ch;
+    }
+    result.push(cur.trim());
+    return result;
+  });
+}
+
+function _buildImportPreview(rows, mapping, headers){
+  const mapped=CSV_FIELDS.filter(f=>mapping[f.key]!==undefined);
+  const thStyle="background:rgba(255,255,255,0.05);padding:6px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap;text-align:left";
+  const tdStyle="padding:5px 10px;border-top:1px solid var(--border);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;font-size:12px";
+  const head=`<tr>${mapped.map(f=>`<th style="${thStyle}">${f.icon} ${f.label}</th>`).join("")}</tr>`;
+  const body=rows.slice(0,5).map(row=>`<tr>${mapped.map(f=>`<td style="${tdStyle}">${row[mapping[f.key]]||"—"}</td>`).join("")}</tr>`).join("");
+  return {head,body};
+}
 
 function handleCsvUpload(event){
   const file=event.target.files[0];
-  if(!file){return;}
-  if(!file.name.endsWith(".csv")){showToast("Please select a .csv file","error");return;}
+  if(!file) return;
+  const isExcel=file.name.match(/\.(xlsx|xls)$/i);
+  const isCsv=file.name.match(/\.csv$/i);
+  if(!isExcel&&!isCsv){showToast("Select a .csv, .xlsx or .xls file","error");return;}
 
   const reader=new FileReader();
   reader.onload=function(e){
-    const text=e.target.result;
-    const lines=text.trim().split("\n").map(line=>{
-      const result=[]; let cur="", inQ=false;
-      for(let ch of line){
-        if(ch==='"'&&!inQ){inQ=true;continue;}
-        if(ch==='"'&&inQ){inQ=false;continue;}
-        if(ch===","&&!inQ){result.push(cur.trim());cur="";continue;}
-        cur+=ch;
+    let lines;
+    try{
+      if(isExcel){
+        lines=_parseExcel(e.target.result);
+      } else {
+        lines=_parseCsv(e.target.result);
       }
-      result.push(cur.trim());
-      return result;
-    });
+    }catch(err){showToast("Could not read file: "+err.message,"error");return;}
 
-    if(lines.length<2){showToast("CSV file is empty or has no data rows","error");return;}
+    if(lines.length<2){showToast("File is empty or has no data rows","error");return;}
 
     csvHeaders=lines[0];
-    csvRows=lines.slice(1).filter(r=>r.some(c=>c));
+    csvRows=lines.slice(1).filter(r=>r.some(c=>String(c).trim()));
+    csvFieldMap=_autoMapFields(csvHeaders);
 
-    // Show preview panel
+    const mapped=CSV_FIELDS.filter(f=>csvFieldMap[f.key]!==undefined);
+    const missing=CSV_FIELDS.filter(f=>f.required&&csvFieldMap[f.key]===undefined);
+
+    // Mapping summary
+    document.getElementById("csvMapSummary").innerHTML=CSV_FIELDS.map(f=>{
+      const idx=csvFieldMap[f.key];
+      const found=idx!==undefined;
+      const color=found?(f.required?"var(--green)":"var(--accent)"):"var(--text-muted)";
+      return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+        <span style="color:${color};font-size:14px">${found?"✅":"⚪"}</span>
+        <span style="font-weight:600;color:var(--text-soft);min-width:85px">${f.label}</span>
+        <span style="color:${found?"var(--text-muted)":"#64748b"};font-style:${found?"normal":"italic"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${found?`← ${csvHeaders[idx]}`:(f.required?"⚠️ required, not found":"not found")}
+        </span>
+      </div>`;
+    }).join("");
+
+    // Preview table (only mapped columns)
+    const {head,body}=_buildImportPreview(csvRows,csvFieldMap,csvHeaders);
+    document.getElementById("csvPreviewHead").innerHTML=head;
+    document.getElementById("csvPreviewBody").innerHTML=body;
+    document.getElementById("csvPreviewStatus").textContent=`${csvRows.length} rows · ${mapped.length} of ${CSV_FIELDS.length} fields detected`;
+    document.getElementById("csvImportNote").textContent=csvRows.length>5?`showing first 5 of ${csvRows.length} rows`:"";
+
+    if(missing.length){
+      showToast(`⚠️ Required field(s) not detected: ${missing.map(f=>f.label).join(", ")} — check column headers`,"error");
+    } else {
+      showToast(`${csvRows.length} rows ready — ${mapped.length} fields auto-mapped`,"success");
+    }
+
     const panel=document.getElementById("csvPreviewPanel");
-    document.getElementById("csvPreviewStatus").textContent=`✅ ${csvRows.length} rows found in "${file.name}"`;
-
-    document.getElementById("csvPreviewHead").innerHTML=`<tr>${csvHeaders.map(h=>`<th style="background:rgba(255,255,255,0.04);padding:6px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${h}</th>`).join("")}</tr>`;
-    document.getElementById("csvPreviewBody").innerHTML=csvRows.slice(0,5).map(r=>`<tr>${r.map(c=>`<td style="padding:5px 10px;border-top:1px solid var(--border);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis">${c||"—"}</td>`).join("")}</tr>`).join("");
-
-    // Build column mapping dropdowns for CSV
-    const fields=[{key:"csvName",label:"Full Name *"},{key:"csvEmail",label:"Email *"},{key:"csvPhone",label:"Phone"},{key:"csvSkill",label:"Skills / Role"}];
-    document.getElementById("csvMapGrid").innerHTML=fields.map(f=>`
-    <div>
-      <label style="font-size:11px;font-weight:600;color:var(--text-soft);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">${f.label}</label>
-      <select id="${f.key}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px">
-        ${f.key==="csvName"||f.key==="csvEmail"?"":"<option value=''>— Skip —</option>"}
-        ${csvHeaders.map((h,i)=>{
-          const hl=h.toLowerCase();
-          const auto=(f.key==="csvName"&&(hl.includes("name")||hl.includes("full")))||
-                     (f.key==="csvEmail"&&hl.includes("email"))||
-                     (f.key==="csvPhone"&&(hl.includes("phone")||hl.includes("mobile")||hl.includes("contact")))||
-                     (f.key==="csvSkill"&&(hl.includes("skill")||hl.includes("role")||hl.includes("position")||hl.includes("domain")));
-          return `<option value="${i}" ${auto?"selected":""}>${h}</option>`;
-        }).join("")}
-      </select>
-    </div>`).join("");
-
     panel.style.display="block";
     panel.scrollIntoView({behavior:"smooth",block:"nearest"});
-    showToast(`${csvRows.length} rows loaded from CSV`,"success");
   };
-  reader.readAsText(file);
-  // Reset input so same file can be re-uploaded
+  if(isExcel) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file);
   event.target.value="";
 }
 
 async function importCsvData(){
-  const nameCol =document.getElementById("csvName")?.value;
-  const emailCol=document.getElementById("csvEmail")?.value;
-  const phoneCol=document.getElementById("csvPhone")?.value;
-  const skillCol=document.getElementById("csvSkill")?.value;
+  const map=csvFieldMap;
+  if(map.name===undefined){showToast("Name column not detected in file","error");return;}
+  if(map.email===undefined){showToast("Email column not detected in file","error");return;}
 
-  if(nameCol===""||nameCol===undefined){showToast("Map the Name column","error");return;}
-  if(emailCol===""||emailCol===undefined){showToast("Map the Email column","error");return;}
+  const btn=document.querySelector("#csvPreviewPanel .btn-accent");
+  if(btn){btn.disabled=true;btn.textContent="⏳ Importing...";}
 
-  let imported=0, skipped=0;
+  let imported=0, skipped=0, dupes=0;
   for(const row of csvRows){
-    const name =row[parseInt(nameCol)]?.trim();
-    const email=row[parseInt(emailCol)]?.trim();
+    const name =(row[map.name]??"").trim();
+    const email=(row[map.email]??"").trim().toLowerCase();
     if(!name||!email){skipped++;continue;}
-    const phone=phoneCol!==""&&phoneCol!==undefined?row[parseInt(phoneCol)]?.trim()||"":"";
-    const skill=skillCol!==""&&skillCol!==undefined?row[parseInt(skillCol)]?.trim()||"":"";
-    try{await api("/candidates","POST",{name,email,phone,skill,resume:""});imported++;}
-    catch(e){skipped++;}
+    const body={
+      name, email,
+      phone:      map.phone!==undefined      ?(row[map.phone]??"").trim():"",
+      skill:      map.skill!==undefined      ?(row[map.skill]??"").trim():"",
+      college:    map.college!==undefined    ?(row[map.college]??"").trim():"",
+      state:      map.state!==undefined      ?(row[map.state]??"").trim():"",
+      edu_domain: map.edu_domain!==undefined ?(row[map.edu_domain]??"").trim():"",
+      duration:   map.duration!==undefined   ?(row[map.duration]??"").trim():"",
+      resume_link:map.resume_link!==undefined?(row[map.resume_link]??"").trim():"",
+      resume:""
+    };
+    try{await api("/candidates","POST",body);imported++;}
+    catch(e){
+      if(e.message&&e.message.includes("409")) dupes++;
+      else skipped++;
+    }
   }
-  showToast(`Imported ${imported} candidates! (${skipped} skipped)`,"success");
+  if(btn){btn.disabled=false;btn.textContent="✓ Import All";}
+  const parts=[`✅ ${imported} imported`];
+  if(dupes) parts.push(`${dupes} already exist`);
+  if(skipped) parts.push(`${skipped} skipped`);
+  showToast(parts.join(" · "),"success");
   document.getElementById("csvPreviewPanel").style.display="none";
   setTimeout(()=>renderCandidates(),600);
 }
 
 // ── GOOGLE SHEET SYNC ────────────────────────────
-let sheetRows = [], sheetHeaders = [];
+let sheetRows = [], sheetHeaders = [], sheetFieldMap = {};
 
 function extractSheetId(url){
   if(url.includes("/forms/d/e/")){
@@ -1567,19 +1648,23 @@ async function syncGoogleForm(){
 
     sheetHeaders = Object.keys(response.responses[0]);
     sheetRows = response.responses.map(row => sheetHeaders.map(h => row[h] || ""));
+    sheetFieldMap = _autoMapFields(sheetHeaders);
 
+    const mapped = CSV_FIELDS.filter(f => sheetFieldMap[f.key] !== undefined);
+    const missing = CSV_FIELDS.filter(f => f.required && sheetFieldMap[f.key] === undefined);
+
+    // Show only mapped columns in preview
+    const {head, body} = _buildImportPreview(sheetRows, sheetFieldMap, sheetHeaders);
     const preview = document.getElementById("sheetPreview");
-    const previewLabel = document.getElementById("previewLabel");
-    const previewHead = document.getElementById("previewHead");
-    const previewBody = document.getElementById("previewBody");
-
-    previewLabel.textContent = `✅ Fetched ${sheetRows.length} responses. Preview (first 5 rows):`;
-    previewHead.innerHTML = `<tr>${sheetHeaders.map(h => `<th style="background:rgba(255,255,255,0.04);padding:6px 10px;font-size:11px;color:var(--text-muted);white-space:nowrap">${h}</th>`).join("")}</tr>`;
-    previewBody.innerHTML = sheetRows.slice(0,5).map(r => `<tr>${r.map(c => `<td style="padding:5px 10px;border-top:1px solid var(--border);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis">${c||"—"}</td>`).join("")}</tr>`).join("");
+    document.getElementById("previewLabel").textContent = `✅ ${sheetRows.length} rows · ${mapped.length} fields auto-detected`;
+    document.getElementById("previewHead").innerHTML = head;
+    document.getElementById("previewBody").innerHTML = body;
     preview.style.display = "block";
 
     showColumnMapping();
-    status.innerHTML = `<span style="color:var(--green)">✅ ${sheetRows.length} rows fetched. Map your columns below and click Import.</span>`;
+    status.innerHTML = missing.length
+      ? `<span style="color:var(--accent)">⚠️ ${sheetRows.length} rows fetched. Required field(s) not found: ${missing.map(f=>f.label).join(", ")}</span>`
+      : `<span style="color:var(--green)">✅ ${sheetRows.length} rows fetched · ${mapped.length} fields mapped. Click Import.</span>`;
 
   }catch(err){
     status.innerHTML = `<span style="color:var(--red)">❌ ${err.message}</span>
@@ -1592,50 +1677,30 @@ async function syncGoogleForm(){
 function showColumnMapping(){
   const section = document.getElementById("columnMapSection");
   const grid = document.getElementById("columnMapGrid");
-
-  const fields = [
-    {key:"name",  label:"Full Name *",    required:true},
-    {key:"email", label:"Email *",         required:true},
-    {key:"phone", label:"Phone",           required:false},
-    {key:"skill", label:"Skills / Role",   required:false},
-  ];
-
-  grid.innerHTML = fields.map(f=>`
-  <div>
-    <label style="font-size:11px;font-weight:600;color:var(--text-soft);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">${f.label}</label>
-    <select id="map_${f.key}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px">
-      ${f.required?"":"<option value=''>— Skip —</option>"}
-      ${sheetHeaders.map((h,i)=>{
-        // Auto-detect common column names
-        const hl = h.toLowerCase();
-        const autoMatch = (f.key==="name" && (hl.includes("name")||hl.includes("full"))) ||
-                          (f.key==="email" && hl.includes("email")) ||
-                          (f.key==="phone" && (hl.includes("phone")||hl.includes("mobile")||hl.includes("contact"))) ||
-                          (f.key==="skill" && (hl.includes("skill")||hl.includes("role")||hl.includes("position")||hl.includes("domain")||hl.includes("technology")));
-        return `<option value="${i}" ${autoMatch?"selected":""}>${h}</option>`;
-      }).join("")}
-    </select>
-  </div>`).join("");
-
+  grid.innerHTML = CSV_FIELDS.map(f => {
+    const hdr = sheetFieldMap[f.key] !== undefined ? sheetHeaders[sheetFieldMap[f.key]] : null;
+    const color = hdr ? (f.required ? "var(--green)" : "var(--accent)") : "var(--text-muted)";
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0">
+      <span style="color:${color};font-size:14px">${hdr ? "✅" : "⚪"}</span>
+      <span style="font-weight:600;color:var(--text-soft);min-width:85px">${f.label}</span>
+      <span style="color:${hdr?"var(--text-muted)":"#64748b"};font-style:${hdr?"normal":"italic"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${hdr ? `← ${hdr}` : (f.required ? "⚠️ required, not found" : "not found")}
+      </span>
+    </div>`;
+  }).join("");
   section.style.display = "block";
 }
 
 async function importMappedData(){
-  const nameCol  = parseInt(document.getElementById("map_name")?.value);
-  const emailCol = parseInt(document.getElementById("map_email")?.value);
-  const phoneCol = document.getElementById("map_phone")?.value;
-  const skillCol = document.getElementById("map_skill")?.value;
+  if(sheetFieldMap.name === undefined){ showToast("Name column not detected in sheet","error"); return; }
+  if(sheetFieldMap.email === undefined){ showToast("Email column not detected in sheet","error"); return; }
+  if(!currentSheetId){ showToast("Fetch the sheet first","error"); return; }
 
-  if(isNaN(nameCol)  || document.getElementById("map_name")?.value  === ""){ showToast("Please map the Name column","error");  return; }
-  if(isNaN(emailCol) || document.getElementById("map_email")?.value === ""){ showToast("Please map the Email column","error"); return; }
-  if(!currentSheetId){ showToast("Fetch the sheet first before importing","error"); return; }
-
-  const fieldMap = {
-    name: sheetHeaders[nameCol],
-    email: sheetHeaders[emailCol],
-  };
-  if(phoneCol !== "" && phoneCol !== undefined){ fieldMap.phone = sheetHeaders[parseInt(phoneCol)]; }
-  if(skillCol !== "" && skillCol !== undefined){ fieldMap.skill = sheetHeaders[parseInt(skillCol)]; }
+  // Build field_map as {field_key: header_name} for ALL detected fields
+  const fieldMap = {};
+  for(const f of CSV_FIELDS){
+    if(sheetFieldMap[f.key] !== undefined) fieldMap[f.key] = sheetHeaders[sheetFieldMap[f.key]];
+  }
 
   const status = document.getElementById("syncStatus");
   status.innerHTML = `<span style="color:var(--accent)">⏳ Importing candidates...</span>`;
@@ -1649,8 +1714,13 @@ async function importMappedData(){
       skip_existing: true
     });
 
-    status.innerHTML = `<span style="color:var(--green)">✅ Done! ${result.created.length} imported, ${result.skipped.length} skipped.</span>`;
-    showToast(`Imported ${result.created.length} candidates!`, "success");
+    const dupes = result.skipped.filter(s=>s.reason==="email exists").length;
+    const other = result.skipped.length - dupes;
+    const parts = [`✅ ${result.created.length} imported`];
+    if(dupes) parts.push(`${dupes} already exist`);
+    if(other) parts.push(`${other} skipped`);
+    status.innerHTML = `<span style="color:var(--green)">${parts.join(" · ")}</span>`;
+    showToast(parts.join(" · "), "success");
 
     document.getElementById("columnMapSection").style.display = "none";
     document.getElementById("sheetPreview").style.display = "none";

@@ -395,13 +395,13 @@ def import_google_form_candidates(data: schemas.GoogleFormImportRequest, db: Ses
         candidate = models.Candidate(
             name=name,
             email=email,
-            phone=row.get(data.field_map.get("phone", "Phone"), "").strip(),
-            skill=row.get(data.field_map.get("skill", "Skill"), "").strip(),
-            state=row.get(data.field_map.get("state", "State"), "").strip(),
-            college=row.get(data.field_map.get("college", "College"), "").strip(),
-            edu_domain=row.get(data.field_map.get("edu_domain", "Education Domain"), "").strip(),
-            duration=row.get(data.field_map.get("duration", "Duration"), "").strip(),
-            resume=row.get(data.field_map.get("resume", "Resume"), "").strip(),
+            phone=row.get(field_map.get("phone", "Phone"), "").strip(),
+            skill=row.get(field_map.get("skill", "Skill"), "").strip(),
+            state=row.get(field_map.get("state", "State"), "").strip(),
+            college=row.get(field_map.get("college", "College"), "").strip(),
+            edu_domain=row.get(field_map.get("edu_domain", "Education Domain"), "").strip(),
+            duration=row.get(field_map.get("duration", "Duration"), "").strip(),
+            resume_link=row.get(field_map.get("resume_link", "Resume Link"), "").strip(),
             status=data.status or "Pending"
         )
         db.add(candidate)
