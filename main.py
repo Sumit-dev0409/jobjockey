@@ -158,9 +158,15 @@ def send_welcome_email(to_email: str, name: str, jj_email: str, password: str, d
         <p style="color:#64748b;font-size:12px;margin-top:24px">— Job Jockey Team</p>
       </div>
     </div>"""
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    if db:
+        def _rval(k):
+            r = db.query(models.Config).filter(models.Config.key == k).first()
+            return r.value if r and r.value else ""
+        resend_key = _rval("resend_key") or resend_key
     try:
-        _send_smtp(SENDER_EMAIL, SENDER_PASSWORD, to_email,
-                   "🎉 Welcome to Job Jockey — Your Login Credentials", html)
+        _dispatch_email(resend_key, SENDER_EMAIL, SENDER_PASSWORD, to_email,
+                        "🎉 Welcome to Job Jockey — Your Login Credentials", html)
         print(f"✅ Welcome email sent to {to_email}")
         return True, ""
     except Exception as e:
@@ -931,15 +937,18 @@ def change_password(data: dict, db: Session = Depends(get_db), user=Depends(get_
 # ════════════════════════════════════════════════
 _DEFAULT_SMTP_EMAIL = "Navneet066@jobjockey.in"
 _DEFAULT_SMTP_PASS  = "lmykilowmhbydyfx"
+_DEFAULT_FROM_EMAIL = "noreply@jobjockey.in"
 
-def _get_smtp_config(db):
-    """Return (smtp_email, smtp_pass) from DB config, env vars, or built-in default."""
+def _get_email_config(db):
+    """Return (resend_key, smtp_email, smtp_pass) — Resend preferred over SMTP."""
     def _val(key):
         row = db.query(models.Config).filter(models.Config.key == key).first()
         return row.value if row and row.value else ""
-    email = _val("smtp_email") or os.getenv("JJ_EMAIL", _DEFAULT_SMTP_EMAIL)
-    pwd   = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", _DEFAULT_SMTP_PASS)
-    return email, pwd
+    resend_key = _val("resend_key") or os.getenv("RESEND_API_KEY", "")
+    smtp_email = _val("smtp_email") or os.getenv("JJ_EMAIL", _DEFAULT_SMTP_EMAIL)
+    smtp_pass  = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", _DEFAULT_SMTP_PASS)
+    return resend_key, smtp_email, smtp_pass
+
 
 def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, html_body: str):
     msg = MIMEMultipart("alternative")
@@ -967,21 +976,54 @@ def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, htm
         last_err = e
     raise last_err
 
+def _send_resend(api_key: str, from_email: str, to_email: str, subject: str, html_body: str):
+    """Send via Resend HTTP API — works on Railway and all cloud platforms."""
+    import json as _json
+    payload = _json.dumps({
+        "from": f"Job Jockey <{from_email}>",
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return _json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Resend error {e.code}: {e.read().decode()}")
+
+def _dispatch_email(resend_key: str, smtp_email: str, smtp_pass: str,
+                    to_email: str, subject: str, html_body: str):
+    """Use Resend if key present, otherwise try SMTP."""
+    if resend_key:
+        _send_resend(resend_key, _DEFAULT_FROM_EMAIL, to_email, subject, html_body)
+    else:
+        _send_smtp(smtp_email, smtp_pass, to_email, subject, html_body)
+
 @app.get("/config/email")
 def get_email_config(db: Session = Depends(get_db), user=Depends(require_boss)):
-    smtp_email, smtp_pass = _get_smtp_config(db)
+    resend_key, smtp_email, smtp_pass = _get_email_config(db)
     return {
-        "smtp_email":     smtp_email,
+        "resend_key_set":  bool(resend_key),
+        "smtp_email":      smtp_email,
         "smtp_configured": bool(smtp_email and smtp_pass),
-        "smtp_pass_set":  bool(smtp_pass)
+        "smtp_pass_set":   bool(smtp_pass),
+        "method":          "resend" if resend_key else "smtp",
     }
 
 @app.post("/config/email")
 def save_email_config(data: dict, db: Session = Depends(get_db), user=Depends(require_boss)):
-    for key in ("smtp_email", "smtp_pass"):
+    for key in ("smtp_email", "smtp_pass", "resend_key"):
         val = data.get(key, "")
-        if key == "smtp_pass" and val == "********":
-            continue          # placeholder — don't overwrite stored password
+        if not val:
+            continue
+        if key in ("smtp_pass", "resend_key") and val == "********":
+            continue
         row = db.query(models.Config).filter(models.Config.key == key).first()
         if row:
             row.value = val
@@ -1000,9 +1042,7 @@ def send_email_api(data: dict, db: Session = Depends(get_db), user=Depends(requi
         raise HTTPException(400, "Invalid recipient email")
     if not subject:
         raise HTTPException(400, "Subject is required")
-    smtp_email, smtp_pass = _get_smtp_config(db)
-    if not smtp_email or not smtp_pass:
-        raise HTTPException(400, "Email not configured. Go to Settings → Email to set Gmail + App Password.")
+    resend_key, smtp_email, smtp_pass = _get_email_config(db)
     html_body = f"""
     <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0f172a;color:#e2e8f0;border-radius:12px;overflow:hidden">
       <div style="background:#f59e0b;padding:20px 24px;text-align:center">
@@ -1016,24 +1056,24 @@ def send_email_api(data: dict, db: Session = Depends(get_db), user=Depends(requi
       </div>
     </div>"""
     try:
-        _send_smtp(smtp_email, smtp_pass, to_email, subject, html_body)
+        _dispatch_email(resend_key, smtp_email, smtp_pass, to_email, subject, html_body)
         return {"msg": f"Email sent to {to_email}"}
     except Exception as e:
         raise HTTPException(500, f"Failed to send email: {e}")
 
 @app.post("/email/test")
 def test_email(db: Session = Depends(get_db), user=Depends(require_boss)):
-    smtp_email, smtp_pass = _get_smtp_config(db)
-    if not smtp_email or not smtp_pass:
-        raise HTTPException(400, "Email not configured")
+    resend_key, smtp_email, smtp_pass = _get_email_config(db)
+    to_addr = smtp_email or _DEFAULT_SMTP_EMAIL
     html_body = f"""
     <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;background:#0f172a;color:#e2e8f0;border-radius:12px;padding:28px">
       <h2 style="color:#f59e0b;margin-top:0">✅ Test Email Successful</h2>
-      <p style="color:#94a3b8">Your Job Jockey email is configured correctly.<br>SMTP: <strong style="color:#f59e0b">{smtp_email}</strong></p>
+      <p style="color:#94a3b8">Job Jockey email is working.<br>
+      Method: <strong style="color:#f59e0b">{"Resend API" if resend_key else "SMTP"}</strong></p>
     </div>"""
     try:
-        _send_smtp(smtp_email, smtp_pass, smtp_email, "✅ Job Jockey — Email Test", html_body)
-        return {"msg": f"Test email sent to {smtp_email}"}
+        _dispatch_email(resend_key, smtp_email, smtp_pass, to_addr, "✅ Job Jockey — Email Test", html_body)
+        return {"msg": f"Test email sent to {to_addr}"}
     except Exception as e:
         raise HTTPException(500, f"Test failed: {e}")
 

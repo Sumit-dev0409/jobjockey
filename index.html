@@ -3961,28 +3961,37 @@ async function renderSettings(tab){
   if(tab==="password"){ renderSettingsTab("password",tabBar); return; }
 
   document.getElementById("mainContent").innerHTML=tabBar+`
-  <!-- SMTP Config -->
+  <!-- Resend API (recommended for Railway/cloud) -->
   <div class="table-card" style="max-width:620px;margin-bottom:20px">
     <div class="table-card-header">
-      <h3>📧 Email Setup (Gmail SMTP)</h3>
+      <h3>📧 Email Setup</h3>
       <span id="smtpBadge" class="badge badge-red">⏳ Checking...</span>
     </div>
     <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
-      <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:14px;font-size:13px;line-height:1.8">
-        <strong style="color:var(--accent)">How to get a Gmail App Password:</strong><br>
-        1. Go to <strong>myaccount.google.com</strong> → Security → 2-Step Verification (enable it)<br>
-        2. Search <strong>"App passwords"</strong> → Select app: <em>Mail</em>, device: <em>Other</em> → Generate<br>
-        3. Copy the 16-character password shown → paste below
+      <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:10px;padding:14px;font-size:13px;line-height:1.8">
+        <strong style="color:var(--green)">⚡ Recommended: Resend API (works on Railway)</strong><br>
+        1. Sign up free at <strong>resend.com</strong><br>
+        2. Go to <strong>API Keys</strong> → Create API Key → copy it<br>
+        3. Verify your domain <strong>jobjockey.in</strong> in Resend → Domains (add DNS records)<br>
+        4. Paste the key below and save
       </div>
       <div class="field">
-        <label>Gmail Address <span style="color:var(--text-muted);font-size:11px">e.g. yourname@gmail.com</span></label>
-        <input id="smtpEmail" type="email" placeholder="yourname@gmail.com"
+        <label>Resend API Key <span style="color:var(--text-muted);font-size:11px">from resend.com/api-keys</span></label>
+        <input id="resendKey" type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx"
           style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
-      <div class="field">
-        <label>Gmail App Password <span style="color:var(--text-muted);font-size:11px">16-character app password (not your Gmail password)</span></label>
-        <input id="smtpPass" type="password" placeholder="xxxx xxxx xxxx xxxx"
-          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
+      <div style="border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">— or use Gmail SMTP (may be blocked on some cloud hosts) —</div>
+        <div class="field">
+          <label>Gmail Address</label>
+          <input id="smtpEmail" type="email" placeholder="yourname@gmail.com"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label>Gmail App Password <span style="color:var(--text-muted);font-size:11px">16-char app password</span></label>
+          <input id="smtpPass" type="password" placeholder="xxxx xxxx xxxx xxxx"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn-sm btn-accent" onclick="saveSmtpConfig()">💾 Save Config</button>
@@ -4107,9 +4116,14 @@ async function loadSmtpStatus(){
     const cfg=await api("/config/email");
     const badge=document.getElementById("smtpBadge");
     if(!badge) return;
-    if(cfg.smtp_configured){
+    if(cfg.method==="resend"){
       badge.className="badge badge-green";
-      badge.textContent="✅ Configured ("+cfg.smtp_email+")";
+      badge.textContent="✅ Resend API (active)";
+      document.getElementById("resendKey").value=cfg.resend_key_set?"re_••••••••••••":"";
+      document.getElementById("smtpEmail").value=cfg.smtp_email||"";
+    } else if(cfg.smtp_configured){
+      badge.className="badge badge-green";
+      badge.textContent="✅ Gmail SMTP ("+cfg.smtp_email+")";
       document.getElementById("smtpEmail").value=cfg.smtp_email||"";
       document.getElementById("smtpPass").value=cfg.smtp_pass_set?"********":"";
     } else {
@@ -4120,14 +4134,17 @@ async function loadSmtpStatus(){
 }
 
 async function saveSmtpConfig(){
-  const email=document.getElementById("smtpEmail")?.value.trim();
-  const pass =document.getElementById("smtpPass")?.value.trim();
-  const st   =document.getElementById("cfgStatus");
-  if(!email){showToast("Enter Gmail address","error");return;}
-  if(!pass) {showToast("Enter App Password","error");return;}
+  const resendKey=document.getElementById("resendKey")?.value.trim();
+  const email    =document.getElementById("smtpEmail")?.value.trim();
+  const pass     =document.getElementById("smtpPass")?.value.trim();
+  const st       =document.getElementById("cfgStatus");
+  if(!resendKey && !email){showToast("Enter a Resend API key or Gmail address","error");return;}
+  if(!resendKey && !pass) {showToast("Enter Gmail App Password","error");return;}
   st.innerHTML=`<span style="color:var(--accent)">⏳ Saving...</span>`;
   try{
-    await api("/config/email","POST",{smtp_email:email,smtp_pass:pass});
+    const body={smtp_email:email,smtp_pass:pass};
+    if(resendKey && !resendKey.startsWith("re_••")) body.resend_key=resendKey;
+    await api("/config/email","POST",body);
     showToast("Email config saved!","success");
     st.innerHTML=`<span style="color:var(--green)">✅ Saved! Click Send Test Email to verify.</span>`;
     loadSmtpStatus();
