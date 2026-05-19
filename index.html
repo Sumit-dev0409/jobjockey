@@ -6,7 +6,6 @@
 <title>Job Jockey — Intern Collaboration Platform</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root {
     --bg: #080d1a;
@@ -1690,29 +1689,13 @@ async function updateCandidate(id,status){
         jjEmail=nm.length>=2?`${nm[0]}.${nm[nm.length-1]}@jobjockey.in`:`${nm[0]}@jobjockey.in`;
       }
 
-      // Send welcome email with login credentials
-      const emailBody=
-        "Congratulations "+c.name+"!\n\n"+
-        "You have been selected as an Intern for Job Jockey.\n\n"+
-        "Your Login Credentials:\n"+
-        "Email    : "+jjEmail+"\n"+
-        "Password : "+jjPass+"\n\n"+
-        "Please login using above credentials and change your password after first login.\n\n"+
-        "We look forward to working with you!\n\n"+
-        "Best regards,\n"+
-        "Job Jockey Team";
-
-      const emailSent=await sendEmail(
-        c.email, c.name,
-        "Congratulations! You are selected as Intern for Job Jockey",
-        emailBody
-      );
-
+      const emailOk = c.email_sent === true;
+      const emailErr = c.email_error || "";
       showToast(
-        emailSent
-          ?`✅ ${c.name} approved! Email sent to ${c.email}`
-          :`✅ ${c.name} approved! Setup EmailJS to send emails automatically`,
-        "success"
+        emailOk
+          ? `✅ ${c.name} approved! Welcome email sent to ${c.email}`
+          : `✅ ${c.name} approved! (email failed: ${emailErr||"SMTP error"})`,
+        emailOk ? "success" : "info"
       );
 
       alert(
@@ -1720,9 +1703,9 @@ async function updateCandidate(id,status){
         `Platform Login:\n`+
         `📧 Email    : ${jjEmail}\n`+
         `🔑 Password : ${jjPass}\n\n`+
-        (emailSent
-          ?`📬 Welcome email sent to: ${c.email}`
-          :`⚠️ Email not sent — go to Email Settings in sidebar to configure EmailJS`)
+        (emailOk
+          ? `📬 Welcome email sent to: ${c.email}`
+          : `⚠️ Email failed: ${emailErr||"SMTP error"}\nShare credentials manually.`)
       );
 
     } else {

@@ -122,20 +122,19 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # ── Email helper ─────────────────────────────────
-def send_welcome_email(to_email: str, name: str, jj_email: str, password: str, db=None):
-    # Try DB config first, fall back to env vars
+def send_welcome_email(to_email: str, name: str, jj_email: str, password: str, db=None) -> tuple:
+    """Returns (success: bool, error_msg: str)."""
     if db:
         def _val(k):
             r = db.query(models.Config).filter(models.Config.key == k).first()
             return r.value if r and r.value else ""
-        SENDER_EMAIL    = _val("smtp_email") or os.getenv("JJ_EMAIL", "")
-        SENDER_PASSWORD = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", "")
+        SENDER_EMAIL    = _val("smtp_email") or os.getenv("JJ_EMAIL", _DEFAULT_SMTP_EMAIL)
+        SENDER_PASSWORD = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", _DEFAULT_SMTP_PASS)
     else:
-        SENDER_EMAIL    = os.getenv("JJ_EMAIL", "")
-        SENDER_PASSWORD = os.getenv("JJ_EMAIL_PASS", "")
+        SENDER_EMAIL    = os.getenv("JJ_EMAIL", _DEFAULT_SMTP_EMAIL)
+        SENDER_PASSWORD = os.getenv("JJ_EMAIL_PASS", _DEFAULT_SMTP_PASS)
     if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print(f"⚠️  Email not configured. Credentials for {name}: {jj_email} / {password}")
-        return
+        return False, "SMTP not configured"
     html = f"""
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;background:#0f172a;color:#e2e8f0;border-radius:12px;overflow:hidden">
       <div style="background:#f59e0b;padding:24px;text-align:center">
@@ -163,8 +162,11 @@ def send_welcome_email(to_email: str, name: str, jj_email: str, password: str, d
         _send_smtp(SENDER_EMAIL, SENDER_PASSWORD, to_email,
                    "🎉 Welcome to Job Jockey — Your Login Credentials", html)
         print(f"✅ Welcome email sent to {to_email}")
+        return True, ""
     except Exception as e:
-        print(f"❌ Email failed: {e}")
+        err = str(e)
+        print(f"❌ Email failed: {err}")
+        return False, err
 
 
 def fetch_google_form_responses(sheet_id: str, sheet_name: Optional[str] = None) -> List[Dict[str, str]]:
@@ -425,12 +427,14 @@ def update_my_candidate(data: dict, db: Session = Depends(get_db), user=Depends(
     db.commit()
     return {"msg": "Info updated"}
 
-@app.patch("/candidates/{cid}", response_model=schemas.CandidateOut)
+@app.patch("/candidates/{cid}")
 def update_candidate(cid: int, data: schemas.CandidateUpdate, db: Session = Depends(get_db), user=Depends(require_permission("manage_candidates"))):
     c = db.query(models.Candidate).filter(models.Candidate.id == cid).first()
     if not c: raise HTTPException(404, "Not found")
     for k, v in data.dict(exclude_none=True).items(): setattr(c, k, v)
     db.commit(); db.refresh(c)
+
+    email_sent, email_error = None, ""
 
     # Only generate credentials on first approval — skip if already approved (resume has LOGIN:)
     if data.status == "Approved" and not (c.resume or "").startswith("LOGIN:"):
@@ -454,10 +458,10 @@ def update_candidate(cid: int, data: schemas.CandidateUpdate, db: Session = Depe
             c.resume = f"LOGIN:{jj_email}|PASS:{password}"
             db.commit(); db.refresh(c)
 
-            try:
-                send_welcome_email(to_email=c.email or "", name=c.name or "", jj_email=jj_email, password=password, db=db)
-            except Exception as e:
-                print(f"Email error: {e}")
+            email_sent, email_error = send_welcome_email(
+                to_email=c.email or "", name=c.name or "",
+                jj_email=jj_email, password=password, db=db
+            )
 
         except Exception as exc:
             import traceback
@@ -465,7 +469,10 @@ def update_candidate(cid: int, data: schemas.CandidateUpdate, db: Session = Depe
             db.rollback()
             raise HTTPException(500, f"Approval failed: {exc}")
 
-    return c
+    result = {k: getattr(c, k, None) for k in ("id","name","email","phone","skill","resume","resume_link","status","state","college","edu_domain","duration")}
+    result["email_sent"] = email_sent
+    result["email_error"] = email_error
+    return result
 
 @app.delete("/candidates/{cid}/credentials")
 def revoke_credentials(cid: int, db: Session = Depends(get_db), user=Depends(require_boss)):
@@ -922,13 +929,16 @@ def change_password(data: dict, db: Session = Depends(get_db), user=Depends(get_
 
 # EMAIL CONFIG & SEND
 # ════════════════════════════════════════════════
+_DEFAULT_SMTP_EMAIL = "Navneet066@jobjockey.in"
+_DEFAULT_SMTP_PASS  = "lmykilowmhbydyfx"
+
 def _get_smtp_config(db):
-    """Return (smtp_email, smtp_pass) from DB config, falling back to env vars."""
+    """Return (smtp_email, smtp_pass) from DB config, env vars, or built-in default."""
     def _val(key):
         row = db.query(models.Config).filter(models.Config.key == key).first()
         return row.value if row and row.value else ""
-    email = _val("smtp_email") or os.getenv("JJ_EMAIL", "")
-    pwd   = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", "")
+    email = _val("smtp_email") or os.getenv("JJ_EMAIL", _DEFAULT_SMTP_EMAIL)
+    pwd   = _val("smtp_pass")  or os.getenv("JJ_EMAIL_PASS", _DEFAULT_SMTP_PASS)
     return email, pwd
 
 def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, html_body: str):
@@ -937,9 +947,25 @@ def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, htm
     msg["From"]    = f"Job Jockey <{smtp_email}>"
     msg["To"]      = to_email
     msg.attach(MIMEText(html_body, "html"))
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
-        s.login(smtp_email, smtp_pass)
-        s.sendmail(smtp_email, to_email, msg.as_string())
+    raw = msg.as_string()
+    last_err = None
+    # Try port 465 (SSL) first — falls back to 587 (STARTTLS) if host blocks 465
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
+            s.login(smtp_email, smtp_pass)
+            s.sendmail(smtp_email, to_email, raw)
+        return
+    except Exception as e:
+        last_err = e
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
+            s.ehlo(); s.starttls(); s.ehlo()
+            s.login(smtp_email, smtp_pass)
+            s.sendmail(smtp_email, to_email, raw)
+        return
+    except Exception as e:
+        last_err = e
+    raise last_err
 
 @app.get("/config/email")
 def get_email_config(db: Session = Depends(get_db), user=Depends(require_boss)):
