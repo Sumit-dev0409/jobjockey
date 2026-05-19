@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import csv, json, re, os, smtplib, urllib.parse, urllib.request
+import csv, json, re, os, smtplib, ssl, urllib.parse, urllib.request
 import bcrypt as _bcrypt
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -957,10 +957,10 @@ def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, htm
     msg["To"]      = to_email
     msg.attach(MIMEText(html_body, "html"))
     raw = msg.as_string()
+    ctx = ssl.create_default_context()
     last_err = None
-    # Try port 465 (SSL) first — falls back to 587 (STARTTLS) if host blocks 465
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=15) as s:
             s.login(smtp_email, smtp_pass)
             s.sendmail(smtp_email, to_email, raw)
         return
@@ -968,7 +968,7 @@ def _send_smtp(smtp_email: str, smtp_pass: str, to_email: str, subject: str, htm
         last_err = e
     try:
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
-            s.ehlo(); s.starttls(); s.ehlo()
+            s.ehlo(); s.starttls(context=ctx); s.ehlo()
             s.login(smtp_email, smtp_pass)
             s.sendmail(smtp_email, to_email, raw)
         return

@@ -3968,31 +3968,30 @@ async function renderSettings(tab){
       <span id="smtpBadge" class="badge badge-red">⏳ Checking...</span>
     </div>
     <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
-      <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:10px;padding:14px;font-size:13px;line-height:1.8">
-        <strong style="color:var(--green)">⚡ Recommended: Resend API (works on Railway)</strong><br>
-        1. Sign up free at <strong>resend.com</strong><br>
-        2. Go to <strong>API Keys</strong> → Create API Key → copy it<br>
-        3. Verify your domain <strong>jobjockey.in</strong> in Resend → Domains (add DNS records)<br>
-        4. Paste the key below and save
+      <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:14px;font-size:13px;line-height:1.8">
+        <strong style="color:var(--accent)">📬 Gmail SMTP Setup</strong><br>
+        1. Enable <strong>2-Step Verification</strong> on your Google account<br>
+        2. Go to <strong>Google Account → Security → App Passwords</strong><br>
+        3. Create an App Password → select "Mail" → copy the 16-char code<br>
+        4. Paste your Gmail address and that code below
       </div>
       <div class="field">
-        <label>Resend API Key <span style="color:var(--text-muted);font-size:11px">from resend.com/api-keys</span></label>
-        <input id="resendKey" type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx"
+        <label>Gmail Address (or Google Workspace)</label>
+        <input id="smtpEmail" type="email" placeholder="yourname@gmail.com or you@yourdomain.com"
           style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
-      <div style="border-top:1px solid var(--border);padding-top:14px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">— or use Gmail SMTP (may be blocked on some cloud hosts) —</div>
-        <div class="field">
-          <label>Gmail Address</label>
-          <input id="smtpEmail" type="email" placeholder="yourname@gmail.com"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
-        </div>
-        <div class="field" style="margin-top:10px">
-          <label>Gmail App Password <span style="color:var(--text-muted);font-size:11px">16-char app password</span></label>
-          <input id="smtpPass" type="password" placeholder="xxxx xxxx xxxx xxxx"
-            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
-        </div>
+      <div class="field">
+        <label>Gmail App Password <span style="color:var(--text-muted);font-size:11px">16-char app password (not your Gmail login password)</span></label>
+        <input id="smtpPass" type="password" placeholder="xxxx xxxx xxxx xxxx"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
       </div>
+      <details style="border-top:1px solid var(--border);padding-top:14px">
+        <summary style="font-size:12px;color:var(--text-muted);cursor:pointer">⚙️ Advanced: Resend API (optional override)</summary>
+        <div style="margin-top:10px">
+          <input id="resendKey" type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx (leave blank to use Gmail)"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+      </details>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn-sm btn-accent" onclick="saveSmtpConfig()">💾 Save Config</button>
         <button class="btn-sm btn-outline" onclick="testSmtpEmail()">📤 Send Test Email</button>
@@ -4116,16 +4115,13 @@ async function loadSmtpStatus(){
     const cfg=await api("/config/email");
     const badge=document.getElementById("smtpBadge");
     if(!badge) return;
-    if(cfg.method==="resend"){
+    if(cfg.smtp_configured||cfg.method==="resend"){
       badge.className="badge badge-green";
-      badge.textContent="✅ Resend API (active)";
-      document.getElementById("resendKey").value=cfg.resend_key_set?"re_••••••••••••":"";
-      document.getElementById("smtpEmail").value=cfg.smtp_email||"";
-    } else if(cfg.smtp_configured){
-      badge.className="badge badge-green";
-      badge.textContent="✅ Gmail SMTP ("+cfg.smtp_email+")";
+      badge.textContent=cfg.method==="resend"?"✅ Resend (active)":"✅ Gmail SMTP ("+cfg.smtp_email+")";
       document.getElementById("smtpEmail").value=cfg.smtp_email||"";
       document.getElementById("smtpPass").value=cfg.smtp_pass_set?"********":"";
+      const rk=document.getElementById("resendKey");
+      if(rk) rk.value=cfg.resend_key_set?"re_••••••••••••":"";
     } else {
       badge.className="badge badge-red";
       badge.textContent="❌ Not Configured";
